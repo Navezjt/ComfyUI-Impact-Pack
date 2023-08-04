@@ -1,6 +1,6 @@
-import { ComfyApp, app } from "/scripts/app.js";
-import { ComfyDialog, $el } from "/scripts/ui.js";
-import { api } from "/scripts/api.js";
+import { ComfyApp, app } from "../../scripts/app.js";
+import { ComfyDialog, $el } from "../../scripts/ui.js";
+import { api } from "../../scripts/api.js";
 
 // temporary implementation (copying from https://github.com/pythongosssss/ComfyUI-WD14-Tagger)
 // I think this should be included into master!!
@@ -144,8 +144,36 @@ function latentSendHandler(event) {
 	}
 }
 
+
+function valueSendHandler(event) {
+    let nodes = app.graph._nodes;
+    for(let i in nodes) {
+        if(nodes[i].type == 'ImpactValueReceiver') {
+            if(nodes[i].widgets[2].value == event.detail.link_id) {
+                nodes[i].widgets[1].value = event.detail.value;
+
+                let typ = typeof event.detail.value;
+                if(typ != "number") {
+                    nodes[i].widgets[0].value = typeof event.detail.value;
+                }
+                else if(Number.isInteger(event.detail.value)) {
+                    nodes[i].widgets[0].value = "INT";
+                }
+                else {
+                    nodes[i].widgets[0].value = "FLOAT";
+                }
+            }
+        }
+    }
+}
+
+
 const impactProgressBadge = new ImpactProgressBadge();
 
+api.addEventListener("stop-iteration", () => {
+    document.getElementById("autoQueueCheckbox").checked = false;
+});
+api.addEventListener("value-send", valueSendHandler);
 api.addEventListener("img-send", imgSendHandler);
 api.addEventListener("latent-send", latentSendHandler);
 api.addEventListener("executed", progressExecuteHandler);
@@ -184,11 +212,33 @@ app.registerExtension({
                         if(widget.type === "customtext") {
                             widget.dynamicPrompts = false;
                             widget.inputEl.placeholder = "wildcard spec: if kept empty, this option will be ignored";
-                            widget.serializeValue = (n,i) => { return n.widgets_values[i]; };
+                            widget.serializeValue = () => {
+                                return node.widgets[i].value;
+                            };
                         }
 			        }
 			    }
 		        break;
+		}
+
+		if(node.comfyClass == "ImpactSEGSLabelFilter") {
+			Object.defineProperty(node.widgets[0], "value", {
+				set: (value) => {
+				        const stackTrace = new Error().stack;
+                        if(stackTrace.includes('inner_value_change')) {
+                            if(node.widgets[1].value.trim() != "" && !node.widgets[1].value.trim().endsWith(","))
+                                node.widgets[1].value += ", "
+
+                            node.widgets[1].value += value;
+                            node.widgets_values[1] = node.widgets[1].value;
+                        }
+
+						this._value = value;
+					},
+				get: () => {
+                        return this._value;
+					 }
+			});
 		}
 
 		if(node.comfyClass == "ImpactWildcardProcessor") {
@@ -198,43 +248,77 @@ app.registerExtension({
 			node.widgets[0].dynamicPrompts = false;
 			node.widgets[1].dynamicPrompts = false;
 
+            let populate_getter = node.widgets[1].__lookupGetter__('value');
+            let populate_setter = node.widgets[1].__lookupSetter__('value');
+
 			let force_serializeValue = async (n,i) =>
 				{
-					if(n.widgets_values[2] == "Fixed") {
+					if(!node.widgets[2].value) {
 						return node.widgets[1].value;
 					}
 					else {
-						let response = await fetch(`/impact/wildcards`, {
+				        let wildcard_text = await node.widgets[0].serializeValue();
+
+						let response = await api.fetchApi(`/impact/wildcards`, {
 																method: 'POST',
 																headers: { 'Content-Type': 'application/json' },
-																body: JSON.stringify({text: n.widgets_values[0]})
+																body: JSON.stringify({text: wildcard_text})
 															});
 
 						let populated = await response.json();
 
-						n.widgets_values[2] = "Fixed";
+						n.widgets_values[2] = false;
 						n.widgets_values[1] = populated.text;
-						node.widgets[1].value = populated.text;
+						populate_setter.call(node.widgets[1], populated.text);
 
 						return populated.text;
 					}
 				};
 
-			//
+			// mode combo
 			Object.defineProperty(node.widgets[2], "value", {
 				set: (value) => {
-						this._value = value;
-						node.widgets[1].inputEl.disabled = value != "Fixed";
+						node._mode_value = value == true || value == "Populate";
+						node.widgets[1].inputEl.disabled = value == true || value == "Populate";
 					},
 				get: () => {
-						if(this._value)
-							return this._value;
+						if(node._mode_value != undefined)
+							return node._mode_value;
 						else
-							return "Populate";
+							return true;
 					 }
 			});
 
-            node.widgets[0].serializeValue = (n,i) => { return n.widgets_values[i]; };
+            // to avoid conflict with presetText.js of pythongosssss
+			Object.defineProperty(node.widgets[1], "value", {
+				set: (value) => {
+				        const stackTrace = new Error().stack;
+                        if(!stackTrace.includes('serializeValue'))
+				            populate_setter.call(node.widgets[1], value);
+					},
+				get: () => {
+				        return populate_getter.call(node.widgets[1]);
+					 }
+			});
+
+            node.widgets[0].serializeValue = (n,i) => {
+                if(node.inputs) {
+	                let link_id = node.inputs.find(x => x.name=="wildcard_text")?.link;
+	                if(link_id != undefined) {
+	                    let link = app.graph.links[link_id];
+	                    let input_widget = app.graph._nodes_by_id[link.origin_id].widgets[link.origin_slot];
+	                    if(input_widget.type == "customtext") {
+	                        return input_widget.value;
+	                    }
+	                }
+	                else {
+	                    return node.widgets[0].value;
+	                }
+                }
+                else {
+                    return node.widgets[0].value;
+                }
+            };
             node.widgets[1].serializeValue = force_serializeValue;
 		}
 
