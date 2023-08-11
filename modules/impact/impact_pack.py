@@ -1,5 +1,8 @@
 import os
 import sys
+
+import torch
+
 import folder_paths
 import comfy.samplers
 import comfy.sd
@@ -219,6 +222,7 @@ class SEGSPaste:
                      "segs": ("SEGS", ),
                      "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                      },
+                "optional": {"ref_image_opt": ("IMAGE", ),}
                 }
 
     RETURN_TYPES = ("IMAGE", )
@@ -227,13 +231,21 @@ class SEGSPaste:
     CATEGORY = "ImpactPack/Detailer"
 
     @staticmethod
-    def doit(image, segs, feather):
+    def doit(image, segs, feather, ref_image_opt=None):
         image_pil = tensor2pil(image).convert('RGBA')
 
         for seg in segs[1]:
-            if seg.cropped_image is not None:
+            ref_image_pil = None
+            if ref_image_opt is None and seg.cropped_image is not None:
+                ref_image_pil = seg.cropped_image
+            elif ref_image_opt is not None:
+                cropped = crop_image(ref_image_opt, seg.crop_region)
+                cropped = np.clip(255. * cropped.squeeze(), 0, 255).astype(np.uint8)
+                ref_image_pil = Image.fromarray(cropped).convert('RGBA')
+
+            if ref_image_pil is not None:
                 mask_pil = feather_mask(seg.cropped_mask, feather)
-                image_pil.paste(seg.cropped_image, (seg.crop_region[0], seg.crop_region[1]), mask_pil)
+                image_pil.paste(ref_image_pil, (seg.crop_region[0], seg.crop_region[1]), mask_pil)
 
         image_tensor = pil2tensor(image_pil.convert('RGB'))
 
@@ -320,6 +332,111 @@ class SEGSLabelFilter:
         return ((segs[0], res_segs), )
 
 
+class SEGSOrderedFilter:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "segs": ("SEGS", ),
+                        "target": (["area(=w*h)", "width", "height", "x1", "y1", "x2", "y2"],),
+                        "order": ("BOOLEAN", {"default": True, "label_on": "descending", "label_off": "ascending"}),
+                        "take_start": ("INT", {"default": 0, "min": 0, "max": sys.maxsize, "step": 1}),
+                        "take_count": ("INT", {"default": 1, "min": 0, "max": sys.maxsize, "step": 1}),
+                     },
+                }
+
+    RETURN_TYPES = ("SEGS",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, segs, target, order, take_start, take_count):
+        segs_with_order = []
+
+        for seg in segs[1]:
+            x1 = seg.crop_region[0]
+            y1 = seg.crop_region[1]
+            x2 = seg.crop_region[2]
+            y2 = seg.crop_region[3]
+
+            if target == "area(=w*h)":
+                value = (y2 - y1) * (x2 - x1)
+            elif target == "width":
+                value = x2 - x1
+            elif target == "height":
+                value = y2 - y1
+            elif target == "x1":
+                value = x1
+            elif target == "x2":
+                value = x2
+            elif target == "y1":
+                value = y1
+            else:
+                value = y2
+
+            segs_with_order.append((value, seg))
+
+        if order:
+            sorted_list = sorted(segs_with_order, key=lambda x: x[0], reverse=True)
+        else:
+            sorted_list = sorted(segs_with_order, key=lambda x: x[0], reverse=False)
+
+        result_list = [item[1] for item in sorted_list[take_start:take_start + take_count]]
+        return ((segs[0], result_list), )
+
+
+class SEGSRangeFilter:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "segs": ("SEGS", ),
+                        "target": (["area(=w*h)", "width", "height", "x1", "y1", "x2", "y2"],),
+                        "mode": ("BOOLEAN", {"default": True, "label_on": "inside", "label_off": "outside"}),
+                        "min_value": ("INT", {"default": 0, "min": 0, "max": sys.maxsize, "step": 1}),
+                        "max_value": ("INT", {"default": 67108864, "min": 0, "max": sys.maxsize, "step": 1}),
+                     },
+                }
+
+    RETURN_TYPES = ("SEGS",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, segs, target, mode, min_value, max_value):
+        new_segs = []
+
+        for seg in segs[1]:
+            x1 = seg.crop_region[0]
+            y1 = seg.crop_region[1]
+            x2 = seg.crop_region[2]
+            y2 = seg.crop_region[3]
+
+            if target == "area(=w*h)":
+                value = (y2 - y1) * (x2 - x1)
+            elif target == "width":
+                value = x2 - x1
+            elif target == "height":
+                value = y2 - y1
+            elif target == "x1":
+                value = x1
+            elif target == "x2":
+                value = x2
+            elif target == "y1":
+                value = y1
+            else:
+                value = y2
+
+            if mode and min_value <= value <= max_value:
+                print(f"[in] value={value} / {mode}, {min_value}, {max_value}")
+                new_segs.append(seg)
+            elif not mode and (value < min_value or value > max_value):
+                print(f"[out] value={value} / {mode}, {min_value}, {max_value}")
+                new_segs.append(seg)
+            else:
+                print(f"[filter] value={value} / {mode}, {min_value}, {max_value}")
+
+        return ((segs[0], new_segs), )
+
+
 class SEGSToImageList:
     @classmethod
     def INPUT_TYPES(s):
@@ -355,6 +472,25 @@ class SEGSToImageList:
             results.append(empty_pil_tensor())
 
         return (results,)
+
+
+class SEGSToMaskList:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                     "segs": ("SEGS", ),
+                     },
+                }
+
+    RETURN_TYPES = ("MASK",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, segs):
+        masks = core.segs_to_masklist(segs)
+        return (masks,)
 
 
 class SEGSConcat:
@@ -1687,6 +1823,7 @@ class ToBinaryMask:
     def INPUT_TYPES(s):
         return {"required": {
                       "mask": ("MASK",),
+                      "threshold": ("INT", {"default": 20, "min": 1, "max": 255}),
                     }
                 }
 
@@ -1695,8 +1832,8 @@ class ToBinaryMask:
 
     CATEGORY = "ImpactPack/Operation"
 
-    def doit(self, mask,):
-        mask = to_binary_mask(mask)
+    def doit(self, mask, threshold):
+        mask = to_binary_mask(mask, threshold/255.0)
         return (mask,)
 
 
@@ -1735,6 +1872,25 @@ class SubtractMask:
 
     def doit(self, mask1, mask2):
         mask = subtract_masks(mask1, mask2)
+        return (mask,)
+
+
+class AddMask:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "mask1": ("MASK",),
+            "mask2": ("MASK",),
+        }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Operation"
+
+    def doit(self, mask1, mask2):
+        mask = add_masks(mask1, mask2)
         return (mask,)
 
 
@@ -2459,3 +2615,19 @@ class ImpactLogger:
         #         print(f" WV : {x['widgets_values'][1]}\n")
 
         return {}
+
+
+class ImageBatchToImageList:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": { "image": ("IMAGE",), } }
+
+    RETURN_TYPES = ("IMAGE",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, image):
+        images = [image[i:i + 1, ...] for i in range(image.shape[0])]
+        return (images, )

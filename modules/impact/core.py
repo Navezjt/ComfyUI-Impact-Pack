@@ -655,7 +655,7 @@ def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1):
     for i in range(mask.shape[0]):
         mask_i = mask[i]
 
-        if combined == "True":
+        if combined:
             indices = np.nonzero(mask_i)
             if len(indices[0]) > 0 and len(indices[1]) > 0:
                 bbox = (
@@ -676,19 +676,22 @@ def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1):
                         result.append(item)
 
         else:
-            labelled_mask = label(mask_i)
-            regions = regionprops(labelled_mask)
+            mask_i_uint8 = (mask_i * 255.0).astype(np.uint8)
+            contours, _ = cv2.findContours(mask_i_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                separated_mask = np.zeros_like(mask_i_uint8)
+                cv2.drawContours(separated_mask, [contour], 0, 255, -1)
+                separated_mask = np.array(separated_mask/255.0).astype(np.float32)
 
-            for region in regions:
-                y1, x1, y2, x2 = region.bbox
-                bbox = x1, y1, x2, y2
+                x, y, w, h = cv2.boundingRect(contour)
+                bbox = x, y, x+w, y+h
                 crop_region = make_crop_region(
                     mask_i.shape[1], mask_i.shape[0], bbox, crop_factor
                 )
 
-                if x2 - x1 > drop_size and y2 - y1 > drop_size:
+                if w > drop_size and h > drop_size:
                     cropped_mask = np.array(
-                        mask_i[
+                        separated_mask[
                             crop_region[1]: crop_region[3],
                             crop_region[0]: crop_region[2],
                         ]
@@ -725,6 +728,23 @@ def segs_to_combined_mask(segs):
         mask[crop_region[1]:crop_region[3], crop_region[0]:crop_region[2]] |= (cropped_mask * 255).astype(np.uint8)
 
     return torch.from_numpy(mask.astype(np.float32) / 255.0)
+
+
+def segs_to_masklist(segs):
+    shape = segs[0]
+    h = shape[0]
+    w = shape[1]
+
+    masks = []
+    for seg in segs[1]:
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cropped_mask = seg.cropped_mask
+        crop_region = seg.crop_region
+        mask[crop_region[1]:crop_region[3], crop_region[0]:crop_region[2]] |= (cropped_mask * 255).astype(np.uint8)
+        mask = torch.from_numpy(mask.astype(np.float32) / 255.0)
+        masks.append(mask)
+
+    return masks
 
 
 def vae_decode(vae, samples, use_tile, hook):
