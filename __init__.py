@@ -133,6 +133,7 @@ NODE_CLASS_MAPPINGS = {
 
     "BitwiseAndMask": BitwiseAndMask,
     "SubtractMask": SubtractMask,
+    "AddMask": AddMask,
     "Segs & Mask": SegsBitwiseAndMask,
     "Segs & Mask ForEach": SegsBitwiseAndMaskForEach,
     "EmptySegs": EmptySEGS,
@@ -175,6 +176,7 @@ NODE_CLASS_MAPPINGS = {
     "SEGSPaste": SEGSPaste,
     "SEGSPreview": SEGSPreview,
     "SEGSToImageList": SEGSToImageList,
+    "ImpactSEGSToMaskList": SEGSToMaskList,
     "ImpactSEGSConcat": SEGSConcat,
 
     # "SEGPick": SEGPick,
@@ -186,11 +188,15 @@ NODE_CLASS_MAPPINGS = {
     "ReencodeLatent": ReencodeLatent,
     "ReencodeLatentPipe": ReencodeLatentPipe,
 
+    "ImpactImageBatchToImageList": ImageBatchToImageList,
+
     "RegionalSampler": RegionalSampler,
     "CombineRegionalPrompts": CombineRegionalPrompts,
     "RegionalPrompt": RegionalPrompt,
 
     "ImpactSEGSLabelFilter": SEGSLabelFilter,
+    "ImpactSEGSRangeFilter": SEGSRangeFilter,
+    "ImpactSEGSOrderedFilter": SEGSOrderedFilter,
 
     "ImpactCompare": ImpactCompare,
     "ImpactConditionalBranch": ImpactConditionalBranch,
@@ -219,6 +225,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Segs & Mask ForEach": "Bitwise(SEGS & MASKS ForEach)",
     "BitwiseAndMask": "Bitwise(MASK & MASK)",
     "SubtractMask": "Bitwise(MASK - MASK)",
+    "AddMask": "Bitwise(MASK + MASK)",
     "DetailerForEach": "Detailer (SEGS)",
     "DetailerForEachPipe": "Detailer (SEGS/pipe)",
     "DetailerForEachDebug": "DetailerDebug (SEGS)",
@@ -245,6 +252,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactKSamplerBasicPipe": "KSampler (pipe)",
     "ImpactKSamplerAdvancedBasicPipe": "KSampler (Advanced/pipe)",
     "ImpactSEGSLabelFilter": "SEGS Filter (label)",
+    "ImpactSEGSRangeFilter": "SEGS Filter (range)",
+    "ImpactSEGSOrderedFilter": "SEGS Filter (ordered)",
     "ImpactSEGSConcat": "SEGS Concat",
 
     "PreviewBridge": "Preview Bridge",
@@ -255,6 +264,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SEGSSwitch": "Switch (SEGS)",
 
     "MasksToMaskList": "Masks to Mask List",
+    "ImpactImageBatchToImageList": "Image batch to Image List"
 }
 
 if not impact.config.get_config()['mmdet_skip']:

@@ -10,7 +10,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 * Starting from V3.6, requires latest version(Aug 8, 9ccc965) of ComfyUI.
 * **In versions below V3.3.1, there was an issue with the image quality generated after using the UltralyticsDetectorProvider. Please make sure to upgrade to a newer version.**
 * Starting from V3.0, nodes related to `mmdet` are optional nodes that are activated only based on the configuration settings.
-  - Through ComfyUI-Impact-Subpack, you can utilize UltralysticsDetectorProvider to access various detection models.
+  - Through ComfyUI-Impact-Subpack, you can utilize UltralyticsDetectorProvider to access various detection models.
 * Between versions 2.22 and 2.21, there is partial compatibility loss regarding the Detailer workflow. If you continue to use the existing workflow, errors may occur during execution. An additional output called "enhanced_alpha_list" has been added to Detailer-related nodes.
 * The permission error related to cv2 that occurred during the installation of Impact Pack has been patched in version 2.21.4. However, please note that the latest versions of ComfyUI and ComfyUI-Manager are required.
 * The "PreviewBridge" feature may not function correctly on ComfyUI versions released before July 1, 2023.
@@ -20,9 +20,9 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 
 ## Custom Nodes
 * SAMLoader - Loads the SAM model.
-* UltralysticsDetectorProvider - Loads the Ultralystics model to provide SEGM_DETECTOR, BBOX_DETECTOR.
+* UltralyticsDetectorProvider - Loads the Ultralystics model to provide SEGM_DETECTOR, BBOX_DETECTOR.
   - Unlike `MMDetDetectorProvider`, for segm models, `BBOX_DETECTOR` is also provided.
-  - The various models available in UltralysticsDetectorProvider can be downloaded through **ComfyUI-Manager**.
+  - The various models available in UltralyticsDetectorProvider can be downloaded through **ComfyUI-Manager**.
 * ONNXDetectorProvider - Loads the ONNX model to provide SEGM_DETECTOR.
 * CLIPSegDetectorProvider - Wrapper for CLIPSeg to provide BBOX_DETECTOR.
   * You need to install the ComfyUI-CLIPSeg node extension.
@@ -39,6 +39,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
   * Please note that this operation is performed with batches of MASKS, not just a single MASK.
 * Bitwise(MASK & MASK) - Performs a 'bitwise and' operation between two masks.
 * Bitwise(MASK - MASK) - Subtracts one mask from another.
+* Bitwise(MASK + MASK) - Combine two masks.
 * SEGM Detector (SEGS) - Detects segmentation and returns SEGS from the input image.
 * BBOX Detector (SEGS) - Detects bounding boxes and returns SEGS from the input image.
 * ONNX Detector (SEGS) - Utilizes the ONNX model to identify the bbox and retrieve the SEGS from the input image.
@@ -56,10 +57,14 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 
 * SEGSDetailer - Performs detailed work on SEGS without pasting it back onto the original image.
 * SEGSPaste - Pastes the results of SEGS onto the original image.
+  * If `ref_image_opt` is present, the images contained within SEGS are ignored. Instead, the image within `ref_image_opt` corresponding to the crop area of SEGS is taken and pasted. The size of the image in `ref_image_opt` should be the same as the original image size. 
 * SEGSPreview - Provides a preview of SEGS.
    * This option is used to preview the improved image through `SEGSDetailer` before merging it into the original. Prior to going through ```SEGSDetailer```, SEGS only contains mask information without image information. If fallback_image_opt is connected to the original image, SEGS without image information will generate a preview using the original image. However, if SEGS already contains image information, fallback_image_opt will be ignored. 
 * SEGSToImageList - Convert SEGS To Image List
-* SEGS Filter (label) - This node filters SEGS based on the label of the detected areas 
+* SEGSToMaskList - Convert SEGS To Mask List
+* SEGS Filter (label) - This node filters SEGS based on the label of the detected areas. 
+* SEGS Filter (ordered) - This node sorts SEGS based on size and position and retrieves SEGs within a certain range. 
+* SEGS Filter (range) - This node retrieves only SEGs from SEGS that have a size and position within a certain range.
 * SEGSConcat - Concatenate segs1 and segs2. If source shape of segs1 and segs2 are different then segs2 will be ignored. 
  
 * Pipe nodes
@@ -115,6 +120,9 @@ This takes latent as input and outputs latent as the result.
 
 * ImpactCompare, ImpactConditionalBranch, ImpactInt, ImpactValueSender, ImpactValueReceiver, ImpactImageInfo, ImpactMinMax, ImpactNeg, ImpactConditionalStopIteration
 - Experimental set of nodes for implementing loop functionality (tutorial to be prepared later / [example workflow](test/loop-test.json)).
+
+* Image batch To Image List - Convert Image batch to Image List
+- You can use images generated in a multi batch to handle them.
 
 
 ## MMDet nodes
