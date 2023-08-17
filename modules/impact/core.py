@@ -109,9 +109,9 @@ def gen_negative_hints(w, h, x1, y1, x2, y2):
 
 
 def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max_size, bbox, seed, steps, cfg, sampler_name,
-                   scheduler, positive, negative, denoise, noise_mask, force_inpaint, wildcard_opt=None):
+                   scheduler, positive, negative, denoise, noise_mask, force_inpaint, wildcard_opt=None, detailer_hook=None):
     if wildcard_opt is not None and wildcard_opt != "":
-        model, positive = wildcards.process_with_loras(wildcard_opt, model, clip)
+        model, _, positive = wildcards.process_with_loras(wildcard_opt, model, clip)
 
     h = image.shape[1]
     w = image.shape[2]
@@ -124,7 +124,7 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
         print(f"Detailer: segment skip (enough big)")
         return None
 
-    if guide_size_for_bbox: # == "bbox"
+    if guide_size_for_bbox:  # == "bbox"
         # Scale up based on the smaller dimension between width and height.
         upscale = guide_size / min(bbox_w, bbox_h)
     else:
@@ -135,6 +135,9 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     new_h = int(h * upscale)
 
     # safeguard
+    if 'aitemplate_keep_loaded' in model.model_options:
+        max_size = min(4096, max_size)
+
     if new_w > max_size or new_h > max_size:
         upscale *= max_size / max(new_w, new_h)
         new_w = int(w * upscale)
@@ -173,10 +176,16 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
         upscaled_mask = upscaled_mask.squeeze().squeeze()
         latent_image['noise_mask'] = upscaled_mask
 
+    if detailer_hook is not None:
+        latent_image = detailer_hook.post_encode(latent_image)
+
     refined_latent = nodes.KSampler().sample(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise)[0]
 
     # non-latent downscale - latent downscale cause bad quality
     refined_image = vae.decode(refined_latent['samples'])
+
+    if detailer_hook is not None:
+        refined_image = detailer_hook.post_decode(refined_image)
 
     # downscale
     refined_image = scale_tensor_and_to_pil(w, h, refined_image)
@@ -754,7 +763,7 @@ def vae_decode(vae, samples, use_tile, hook):
         pixels = nodes.VAEDecode().decode(vae, samples)[0]
 
     if hook is not None:
-        hook.post_decode(pixels)
+        pixels = hook.post_decode(pixels)
 
     return pixels
 
@@ -766,7 +775,7 @@ def vae_encode(vae, pixels, use_tile, hook):
         samples = nodes.VAEEncode().encode(vae, pixels)[0]
 
     if hook is not None:
-        hook.post_encode(samples)
+        samples = hook.post_encode(samples)
 
     return samples
 
@@ -1153,6 +1162,39 @@ class PixelKSampleUpscaler:
         refined_latent = nodes.KSampler().sample(model, seed, steps, cfg, sampler_name, scheduler,
                                                  positive, negative, upscaled_latent, denoise)[0]
         return refined_latent
+
+
+# REQUIREMENTS: BlenderNeko/ComfyUI Noise
+try:
+    class InjectNoiseHook(PixelKSampleHook):
+        def __init__(self, source, seed, start_strength, end_strength):
+            super().__init__()
+            self.source = source
+            self.seed = seed
+            self.start_strength = start_strength
+            self.end_strength = end_strength
+
+        def post_encode(self, samples):
+            # gen noise
+            size = samples['samples'].shape
+            seed = self.cur_step + self.seed
+            from custom_nodes.ComfyUI_Noise.nodes import NoisyLatentImage, InjectNoise
+            noise = NoisyLatentImage().create_noisy_latents(self.source, seed, size[3]*8, size[2]*8, size[0])[0]
+
+            # inj noise
+            mask = None
+            if 'noise_mask' in samples:
+                mask = samples['noise_mask']
+
+            strength = self.start_strength + (self.end_strength-self.start_strength)*self.cur_step/self.total_step
+            samples = InjectNoise().inject_noise(samples, strength, noise, mask)[0]
+
+            if mask is not None:
+                samples['noise_mask'] = mask
+
+            return samples
+except:
+    pass
 
 
 # REQUIREMENTS: BlenderNeko/ComfyUI_TiledKSampler

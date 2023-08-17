@@ -190,6 +190,31 @@ app.registerExtension({
 		if (nodeData.name == "IterativeLatentUpscale" || nodeData.name == "IterativeImageUpscale") {
 			impactProgressBadge.addStatusHandler(nodeType);
 		}
+
+        if (nodeData.name === 'ImpactMakeImageList') {
+            const onConnectionsChange = nodeType.prototype.onConnectionsChange
+            nodeType.prototype.onConnectionsChange = function (type, index, connected, link_info) {
+                if (!connected && this.inputs.length > 1) {
+                    if (this.widgets) {
+                        const w = this.widgets.find((w) => w.name === this.inputs[index].name)
+                        if (w) {
+                            w.onRemoved?.()
+                            this.widgets.length = this.widgets.length - 1
+                        }
+                    }
+                    this.removeInput(index);
+                }
+
+                for (let i = 0; i < this.inputs.length; i++) {
+                    this.inputs[i].label = `image${i + 1}`
+                    this.inputs[i].name = `image${i + 1}`
+                }
+
+                if (this.inputs[this.inputs.length - 1].link != undefined) {
+                    this.addInput(`image${this.inputs.length + 1}`, 'IMAGE');
+                }
+            }
+        }
 	},
 
 	nodeCreated(node, app) {
@@ -206,6 +231,10 @@ app.registerExtension({
 		    case "BasicPipeToDetailerPipe":
 		    case "EditDetailerPipe":
 		    case "FaceDetailer":
+		    case "DetailerForEach":
+		    case "DetailerForEachDebug":
+		    case "DetailerForEachPipe":
+		    case "DetailerForEachDebugPipe":
 		        {
                     for(let i in node.widgets) {
                         let widget = node.widgets[i];
@@ -233,15 +262,44 @@ app.registerExtension({
                             node.widgets_values[1] = node.widgets[1].value;
                         }
 
-						this._value = value;
+						node._value = value;
 					},
 				get: () => {
-                        return this._value;
+                        return node._value;
 					 }
 			});
 		}
 
-		if(node.comfyClass == "ImpactWildcardProcessor") {
+		if(node.comfyClass == "ImpactWildcardEncode") {
+			node._value = "Select the LoRA to add to the text";
+
+			Object.defineProperty(node.widgets[3], "value", {
+				set: (value) => {
+				        const stackTrace = new Error().stack;
+                        if(stackTrace.includes('inner_value_change')) {
+                            if(value != "Select the LoRA to add to the text") {
+	                            let lora_name = value;
+	                            if (lora_name.endsWith('.safetensors')) {
+	                                lora_name = lora_name.slice(0, -12);
+	                            }
+
+	                            node.widgets[0].value += `<lora:${lora_name}>`;
+	                            node.widgets_values[0] = node.widgets[0].value;
+                            }
+                        }
+
+						node._value = value;
+					},
+				get: () => {
+                        return node._value;
+					 }
+			});
+
+			// Preventing validation errors from occurring in any situation.
+			node.widgets[3].serializeValue = () => { return "Select the LoRA to add to the text"; }
+		}
+
+		if(node.comfyClass == "ImpactWildcardProcessor" || node.comfyClass == "ImpactWildcardEncode") {
 			node.widgets[0].inputEl.placeholder = "Wildcard Prompt (User input)";
 			node.widgets[1].inputEl.placeholder = "Populated Prompt (Will be generated automatically)";
 			node.widgets[1].inputEl.disabled = true;

@@ -14,6 +14,8 @@ import math
 import zipfile
 import re
 from PIL import ImageDraw
+
+import impact.wildcards
 from server import PromptServer
 
 from impact.utils import *
@@ -312,7 +314,8 @@ class SEGSLabelFilter:
                      },
                 }
 
-    RETURN_TYPES = ("SEGS",)
+    RETURN_TYPES = ("SEGS", "SEGS",)
+    RETURN_NAMES = ("filtered_SEGS", "remained_SEGS",)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Util"
@@ -322,14 +325,18 @@ class SEGSLabelFilter:
         labels = set([label.strip() for label in labels])
 
         if 'all' in labels:
-            return (segs, )
+            return (segs, (segs[0], []), )
         else:
             res_segs = []
+            remained_segs = []
+
             for x in segs[1]:
                 if x.label in labels:
                     res_segs.append(x)
+                else:
+                    remained_segs.append(x)
 
-        return ((segs[0], res_segs), )
+        return ((segs[0], res_segs), (segs[0], remained_segs), )
 
 
 class SEGSOrderedFilter:
@@ -344,7 +351,8 @@ class SEGSOrderedFilter:
                      },
                 }
 
-    RETURN_TYPES = ("SEGS",)
+    RETURN_TYPES = ("SEGS", "SEGS",)
+    RETURN_NAMES = ("filtered_SEGS", "remained_SEGS",)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Util"
@@ -381,7 +389,9 @@ class SEGSOrderedFilter:
             sorted_list = sorted(segs_with_order, key=lambda x: x[0], reverse=False)
 
         result_list = [item[1] for item in sorted_list[take_start:take_start + take_count]]
-        return ((segs[0], result_list), )
+        remained_list = [item[1] for item in sorted_list if item[1] not in result_list]
+
+        return ((segs[0], result_list), (segs[0], remained_list), )
 
 
 class SEGSRangeFilter:
@@ -396,13 +406,15 @@ class SEGSRangeFilter:
                      },
                 }
 
-    RETURN_TYPES = ("SEGS",)
+    RETURN_TYPES = ("SEGS", "SEGS",)
+    RETURN_NAMES = ("filtered_SEGS", "remained_SEGS",)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Util"
 
     def doit(self, segs, target, mode, min_value, max_value):
         new_segs = []
+        remained_segs = []
 
         for seg in segs[1]:
             x1 = seg.crop_region[0]
@@ -432,9 +444,10 @@ class SEGSRangeFilter:
                 print(f"[out] value={value} / {mode}, {min_value}, {max_value}")
                 new_segs.append(seg)
             else:
+                remained_segs.append(seg)
                 print(f"[filter] value={value} / {mode}, {min_value}, {max_value}")
 
-        return ((segs[0], new_segs), )
+        return ((segs[0], new_segs), (segs[0], remained_segs), )
 
 
 class SEGSToImageList:
@@ -538,7 +551,9 @@ class DetailerForEach:
                      "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                      "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
                      "force_inpaint": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
+                     "wildcard": ("STRING", {"multiline": True}),
                      },
+                "optional": {"detailer_hook": ("DETAILER_HOOK",), }
                 }
 
     RETURN_TYPES = ("IMAGE", )
@@ -548,7 +563,7 @@ class DetailerForEach:
 
     @staticmethod
     def do_detail(image, segs, model, clip, vae, guide_size, guide_size_for_bbox, max_size, seed, steps, cfg, sampler_name, scheduler,
-                  positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard_opt=None):
+                  positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard_opt=None, detailer_hook=None):
 
         image_pil = tensor2pil(image).convert('RGBA')
 
@@ -574,7 +589,7 @@ class DetailerForEach:
 
             enhanced_pil = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for_bbox, max_size,
                                                seg.bbox, seed, steps, cfg, sampler_name, scheduler,
-                                               positive, negative, denoise, cropped_mask, force_inpaint, wildcard_opt)
+                                               positive, negative, denoise, cropped_mask, force_inpaint, wildcard_opt, detailer_hook)
 
             if not (enhanced_pil is None):
                 # don't latent composite-> converting to latent caused poor quality
@@ -603,12 +618,12 @@ class DetailerForEach:
         return image_tensor, cropped_list, enhanced_list, enhanced_alpha_list
 
     def doit(self, image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
-             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint):
+             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard, detailer_hook=None):
 
         enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps,
                                       cfg, sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
-                                      force_inpaint)
+                                      force_inpaint, wildcard, detailer_hook)
 
         return (enhanced_img, )
 
@@ -631,8 +646,10 @@ class DetailerForEachPipe:
                      "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                      "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
                      "force_inpaint": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
-                     "basic_pipe": ("BASIC_PIPE", )
+                     "basic_pipe": ("BASIC_PIPE", ),
+                     "wildcard": ("STRING", {"multiline": True}),
                      },
+                "optional": {"detailer_hook": ("DETAILER_HOOK",), }
                 }
 
     RETURN_TYPES = ("IMAGE", )
@@ -641,13 +658,13 @@ class DetailerForEachPipe:
     CATEGORY = "ImpactPack/Detailer"
 
     def doit(self, image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
-             denoise, feather, noise_mask, force_inpaint, basic_pipe):
+             denoise, feather, noise_mask, force_inpaint, basic_pipe, wildcard, detailer_hook=None):
 
         model, clip, vae, positive, negative = basic_pipe
         enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
-                                      force_inpaint)
+                                      force_inpaint, wildcard, detailer_hook)
 
         return (enhanced_img, )
 
@@ -939,6 +956,7 @@ class FaceDetailer:
                 "optional": {
                     "sam_model_opt": ("SAM_MODEL", ),
                     "segm_detector_opt": ("SEGM_DETECTOR", ),
+                    "detailer_hook": ("DETAILER_HOOK",)
                 }}
 
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "DETAILER_PIPE", )
@@ -954,7 +972,7 @@ class FaceDetailer:
                      bbox_threshold, bbox_dilation, bbox_crop_factor,
                      sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion, sam_mask_hint_threshold,
                      sam_mask_hint_use_negative, drop_size,
-                     bbox_detector, segm_detector=None, sam_model_opt=None, wildcard_opt=None):
+                     bbox_detector, segm_detector=None, sam_model_opt=None, wildcard_opt=None, detailer_hook=None):
         # make default prompt as 'face' if empty prompt for CLIPSeg
         bbox_detector.setAux('face')
         segs = bbox_detector.detect(image, bbox_threshold, bbox_dilation, bbox_crop_factor, drop_size)
@@ -975,7 +993,7 @@ class FaceDetailer:
         enhanced_img, _, cropped_enhanced, cropped_enhanced_alpha = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for_bbox, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
-                                      force_inpaint, wildcard_opt)
+                                      force_inpaint, wildcard_opt, detailer_hook)
 
         # Mask Generator
         mask = core.segs_to_combined_mask(segs)
@@ -992,16 +1010,16 @@ class FaceDetailer:
              positive, negative, denoise, feather, noise_mask, force_inpaint,
              bbox_threshold, bbox_dilation, bbox_crop_factor,
              sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion, sam_mask_hint_threshold,
-             sam_mask_hint_use_negative, drop_size, bbox_detector, wildcard, sam_model_opt=None, segm_detector_opt=None):
+             sam_mask_hint_use_negative, drop_size, bbox_detector, wildcard, sam_model_opt=None, segm_detector_opt=None, detailer_hook=None):
 
         enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask = FaceDetailer.enhance_face(
             image, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, denoise, feather, noise_mask, force_inpaint,
             bbox_threshold, bbox_dilation, bbox_crop_factor,
             sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion, sam_mask_hint_threshold,
-            sam_mask_hint_use_negative, drop_size, bbox_detector, segm_detector_opt, sam_model_opt, wildcard)
+            sam_mask_hint_use_negative, drop_size, bbox_detector, segm_detector_opt, sam_model_opt, wildcard, detailer_hook)
 
-        pipe = (model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector_opt, sam_model_opt)
+        pipe = (model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector_opt, sam_model_opt, detailer_hook)
         return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, pipe
 
 
@@ -1035,6 +1053,34 @@ class LatentPixelScale:
         return (latent,)
 
 
+class NoiseInjectionDetailerHookProvider:
+    schedules = ["simple"]
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                     "source": (["CPU", "GPU"],),
+                     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                     "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 200.0, "step": 0.01}),
+                    },
+                }
+
+    RETURN_TYPES = ("DETAILER_HOOK",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Detailer"
+
+    def doit(self, source, seed, strength):
+        try:
+            hook = core.InjectNoiseHook(source, seed, strength, strength)
+            hook.set_steps((1, 1))
+            return (hook, )
+        except Exception as e:
+            print("[ERROR] NoiseInjectionDetailerHookProvider: 'ComfyUI Noise' custom node isn't installed. You must install 'BlenderNeko/ComfyUI Noise' extension to use this node.")
+            print(f"\t{e}")
+            pass
+
+
 class CfgScheduleHookProvider:
     schedules = ["simple"]
 
@@ -1057,6 +1103,38 @@ class CfgScheduleHookProvider:
             hook = core.SimpleCfgScheduleHook(target_cfg)
 
         return (hook, )
+
+
+class NoiseInjectionHookProvider:
+    schedules = ["simple"]
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                     "schedule_for_iteration": (s.schedules,),
+                     "source": (["CPU", "GPU"],),
+                     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                     "start_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 200.0, "step": 0.01}),
+                     "end_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 200.0, "step": 0.01}),
+                    },
+                }
+
+    RETURN_TYPES = ("PK_HOOK",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Upscale"
+
+    def doit(self, schedule_for_iteration, source, seed, start_strength, end_strength):
+        try:
+            hook = None
+            if schedule_for_iteration == "simple":
+                hook = core.InjectNoiseHook(source, seed, start_strength, end_strength)
+
+            return (hook, )
+        except Exception as e:
+            print("[ERROR] NoiseInjectionHookProvider: 'ComfyUI Noise' custom node isn't installed. You must install 'BlenderNeko/ComfyUI Noise' extension to use this node.")
+            print(f"\t{e}")
+            pass
 
 
 class DenoiseScheduleHookProvider:
@@ -1511,14 +1589,14 @@ class FaceDetailerPipe:
              sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion,
              sam_mask_hint_threshold, sam_mask_hint_use_negative, drop_size):
 
-        model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector, sam_model_opt = detailer_pipe
+        model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector, sam_model_opt, detailer_hook = detailer_pipe
 
         enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask = FaceDetailer.enhance_face(
             image, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, denoise, feather, noise_mask, force_inpaint,
             bbox_threshold, bbox_dilation, bbox_crop_factor,
             sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion, sam_mask_hint_threshold,
-            sam_mask_hint_use_negative, drop_size, bbox_detector, segm_detector, sam_model_opt, wildcard)
+            sam_mask_hint_use_negative, drop_size, bbox_detector, segm_detector, sam_model_opt, wildcard, detailer_hook)
 
         if len(cropped_enhanced) == 0:
             cropped_enhanced = [empty_pil_tensor()]
@@ -1539,12 +1617,12 @@ class DetailerForEachTest(DetailerForEach):
     CATEGORY = "ImpactPack/Detailer"
 
     def doit(self, image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
-             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint):
+             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard, detailer_hook=None):
 
         enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps,
                                       cfg, sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
-                                      force_inpaint)
+                                      force_inpaint, wildcard, detailer_hook)
 
         # set fallback image
         if len(cropped) == 0:
@@ -1569,13 +1647,13 @@ class DetailerForEachTestPipe(DetailerForEachPipe):
     CATEGORY = "ImpactPack/Detailer"
 
     def doit(self, image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
-             denoise, feather, noise_mask, force_inpaint, basic_pipe):
+             denoise, feather, noise_mask, force_inpaint, basic_pipe, wildcard, detailer_hook=None):
 
         model, clip, vae, positive, negative = basic_pipe
         enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
-                                      force_inpaint)
+                                      force_inpaint, wildcard, detailer_hook)
 
         # set fallback image
         if len(cropped) == 0:
@@ -2469,6 +2547,29 @@ class ImpactWildcardProcessor:
         return (populated_text, )
 
 
+class ImpactWildcardEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "model": ("MODEL",),
+                        "clip": ("CLIP",),
+                        "wildcard_text": ("STRING", {"multiline": True}),
+                        "populated_text": ("STRING", {"multiline": True}),
+                        "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
+                        "Select to add LoRA": (["Select the LoRA to add to the text"] + folder_paths.get_filename_list("loras"), ),
+                    },
+                }
+
+    CATEGORY = "ImpactPack/Prompt"
+
+    RETURN_TYPES = ("MODEL", "CLIP", "CONDITIONING", )
+    FUNCTION = "doit"
+
+    def doit(self, *args, **kwargs):
+        model, clip, conditioning = impact.wildcards.process_with_loras(kwargs['populated_text'], kwargs['model'], kwargs['clip'])
+        return (model, clip, conditioning)
+
+
 class ReencodeLatent:
     @classmethod
     def INPUT_TYPES(s):
@@ -2585,38 +2686,6 @@ class KSamplerAdvancedBasicPipe:
         return (basic_pipe, latent, vae)
 
 
-class ImpactLogger:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {"required": {
-                        "text": ("STRING", {"default": "", "forceInput": True}),
-                    },
-                "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
-                }
-
-    CATEGORY = "ImpactPack/Debug"
-
-    OUTPUT_NODE = True
-
-    RETURN_TYPES = ()
-    FUNCTION = "doit"
-
-    def doit(self, text, prompt, extra_pnginfo):
-        print(f"[IMPACT LOGGER]: {text}")
-
-        print(f"         PROMPT: {prompt}")
-
-        # for x in prompt:
-        #     if 'inputs' in x and 'populated_text' in x['inputs']:
-        #         print(f"PROMP: {x['10']['inputs']['populated_text']}")
-        #
-        # for x in extra_pnginfo['workflow']['nodes']:
-        #     if x['type'] == 'ImpactWildcardProcessor':
-        #         print(f" WV : {x['widgets_values'][1]}\n")
-
-        return {}
-
-
 class ImageBatchToImageList:
     @classmethod
     def INPUT_TYPES(s):
@@ -2631,3 +2700,123 @@ class ImageBatchToImageList:
     def doit(self, image):
         images = [image[i:i + 1, ...] for i in range(image.shape[0])]
         return (images, )
+
+
+class MakeImageList:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {"image1": ("IMAGE",), }}
+
+    RETURN_TYPES = ("IMAGE",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, **kwargs):
+        images = []
+
+        for k, v in kwargs.items():
+            images.append(v)
+
+        return (images, )
+
+
+class StringSelector:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "strings": ("STRING", {"multiline": True}),
+            "multiline": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
+            "select": ("INT", {"min": 0, "max": sys.maxsize, "step": 1, "default": 0}),
+        }}
+
+    RETURN_TYPES = ("STRING",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, strings, multiline, select):
+        lines = strings.split('\n')
+
+        if multiline:
+            result = []
+            current_string = ""
+
+            for line in lines:
+                if line.startswith("#"):
+                    if current_string:
+                        result.append(current_string.strip())
+                        current_string = ""
+                current_string += line + "\n"
+
+            if current_string:
+                result.append(current_string.strip())
+
+            if len(result) == 0:
+                selected = strings
+            else:
+                selected = result[select % len(result)]
+
+            if selected.startswith('#'):
+                selected = selected[1:]
+        else:
+            if len(lines) == 0:
+                selected = strings
+            else:
+                selected = lines[select % len(lines)]
+
+        return (selected, )
+
+
+from impact.logics import AnyType
+
+class ImpactLogger:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "data": (AnyType("*"), ""),
+                    },
+                "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
+                }
+
+    CATEGORY = "ImpactPack/Debug"
+
+    OUTPUT_NODE = True
+
+    RETURN_TYPES = ()
+    FUNCTION = "doit"
+
+    def doit(self, data, prompt, extra_pnginfo):
+        shape = ""
+        if hasattr(data, "shape"):
+            shape = f"{data.shape} / "
+
+        print(f"[IMPACT LOGGER]: {shape}{data}")
+
+        print(f"         PROMPT: {prompt}")
+
+        # for x in prompt:
+        #     if 'inputs' in x and 'populated_text' in x['inputs']:
+        #         print(f"PROMP: {x['10']['inputs']['populated_text']}")
+        #
+        # for x in extra_pnginfo['workflow']['nodes']:
+        #     if x['type'] == 'ImpactWildcardProcessor':
+        #         print(f" WV : {x['widgets_values'][1]}\n")
+
+        return {}
+
+
+class ImpactDummyInput:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {}}
+
+    CATEGORY = "ImpactPack/Debug"
+
+    RETURN_TYPES = (AnyType("*"),)
+    FUNCTION = "doit"
+
+    def doit(self):
+        return ("DUMMY",)
