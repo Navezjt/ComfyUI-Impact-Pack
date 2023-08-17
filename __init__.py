@@ -1,3 +1,10 @@
+"""
+@author: Dr.Lt.Data
+@title: Impact Pack
+@nickname: Impact Pack
+@description: This extension offers various detector nodes and detailer nodes that allow you to configure a workflow that automatically enhances facial details. And provide iterative upscaler.
+"""
+
 import shutil
 import folder_paths
 import os
@@ -15,6 +22,7 @@ sys.path.append(subpack_path)
 
 
 import impact.config
+import impact.hacky
 print(f"### Loading: ComfyUI-Impact-Pack ({impact.config.version})")
 
 
@@ -130,6 +138,8 @@ NODE_CLASS_MAPPINGS = {
     "PixelKSampleHookCombine": PixelKSampleHookCombine,
     "DenoiseScheduleHookProvider": DenoiseScheduleHookProvider,
     "CfgScheduleHookProvider": CfgScheduleHookProvider,
+    "NoiseInjectionHookProvider": NoiseInjectionHookProvider,
+    "NoiseInjectionDetailerHookProvider": NoiseInjectionDetailerHookProvider,
 
     "BitwiseAndMask": BitwiseAndMask,
     "SubtractMask": SubtractMask,
@@ -145,6 +155,8 @@ NODE_CLASS_MAPPINGS = {
     "BboxDetectorSEGS": BboxDetectorForEach,
     "SegmDetectorSEGS": SegmDetectorForEach,
     "ONNXDetectorSEGS": ONNXDetectorForEach,
+    "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
+    "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
     "SegmDetectorCombined_v2": SegmDetectorCombined,
@@ -170,7 +182,7 @@ NODE_CLASS_MAPPINGS = {
     # "LoadConditioning": LoadConditioning,
 
     "ImpactWildcardProcessor": ImpactWildcardProcessor,
-    "ImpactLogger": ImpactLogger,
+    "ImpactWildcardEncode": ImpactWildcardEncode,
 
     "SEGSDetailer": SEGSDetailer,
     "SEGSPaste": SEGSPaste,
@@ -189,6 +201,7 @@ NODE_CLASS_MAPPINGS = {
     "ReencodeLatentPipe": ReencodeLatentPipe,
 
     "ImpactImageBatchToImageList": ImageBatchToImageList,
+    "ImpactMakeImageList": MakeImageList,
 
     "RegionalSampler": RegionalSampler,
     "CombineRegionalPrompts": CombineRegionalPrompts,
@@ -208,6 +221,10 @@ NODE_CLASS_MAPPINGS = {
     "ImpactMinMax": ImpactMinMax,
     "ImpactNeg": ImpactNeg,
     "ImpactConditionalStopIteration": ImpactConditionalStopIteration,
+    "ImpactStringSelector": StringSelector,
+
+    "ImpactLogger": ImpactLogger,
+    "ImpactDummyInput": ImpactDummyInput,
 }
 
 
@@ -215,6 +232,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BboxDetectorSEGS": "BBOX Detector (SEGS)",
     "SegmDetectorSEGS": "SEGM Detector (SEGS)",
     "ONNXDetectorSEGS": "ONNX Detector (SEGS)",
+    "ImpactSimpleDetectorSEGS": "Simple Detector (SEGS)",
+    "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
+
     "BboxDetectorCombined_v2": "BBOX Detector (combined)",
     "SegmDetectorCombined_v2": "SEGM Detector (combined)",
     "SegsToCombinedMask": "SEGS to MASK (combined)",
@@ -264,7 +284,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SEGSSwitch": "Switch (SEGS)",
 
     "MasksToMaskList": "Masks to Mask List",
-    "ImpactImageBatchToImageList": "Image batch to Image List"
+    "ImpactImageBatchToImageList": "Image batch to Image List",
+    "ImpactMakeImageList": "Make Image List",
+    "ImpactStringSelector": "String Selector"
 }
 
 if not impact.config.get_config()['mmdet_skip']:
