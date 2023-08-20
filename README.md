@@ -181,7 +181,7 @@ mmdet_skip = False
    * Impact Pack will automatically download subpack during its initial launch.
 5. (optional) `python install.py`
    * Impact Pack will automatically install its dependencies during its initial launch.
-   * For the portable version, you should execute the command `..\..\..\python_embedded\python.exe install.py` to run the installation script.
+   * For the portable version, you should execute the command `..\..\..\python_embeded\python.exe install.py` to run the installation script.
 
 
 6. Restart ComfyUI
@@ -206,6 +206,24 @@ mmdet_skip = False
 * linux packages (ubuntu)
   * libgl1-mesa-glx
   * libglib2.0-0
+
+
+## Config example
+* Once you run the Impact Pack for the first time, an `impact-pack.ini` file will be automatically generated in the Impact Pack directory. You can modify this configuration file to customize the default behavior.
+  * `dependency_version` - don't touch this
+  * `mmdet_skip` - disable MMDet based nodes and legacy nodes if `True`
+  * `sam_editor_cpu` - use cpu for `SAM editor` instead of gpu
+  * sam_editor_model: Specify the SAM model for the SAM editor.
+    * You can download various SAM models using ComfyUI-Manager.
+    * Path to SAM model: `ComfyUI/models/sams`
+```
+[default]
+dependency_version = 9
+mmdet_skip = True
+sam_editor_cpu = False
+sam_editor_model = sam_vit_b_01ec64.pth
+```
+
 
 ## Other Materials (auto-download on initial startup)
 
