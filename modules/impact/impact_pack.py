@@ -283,14 +283,17 @@ class SEGSPreview:
         results = list()
 
         for seg in segs[1]:
+            cropped_image = None
+
             if seg.cropped_image is not None:
                 cropped_image = seg.cropped_image
             elif fallback_image_opt is not None:
                 # take from original image
                 cropped_image = crop_image(fallback_image_opt, seg.crop_region)
-                cropped_image = Image.fromarray(np.clip(255. * cropped_image.squeeze(), 0, 255).astype(np.uint8))
 
             if cropped_image is not None:
+                cropped_image = Image.fromarray(np.clip(255. * cropped_image.squeeze(), 0, 255).astype(np.uint8))
+
                 file = f"{filename}_{counter:05}_.webp"
                 cropped_image.save(os.path.join(full_output_folder, file))
                 results.append({
@@ -551,7 +554,7 @@ class DetailerForEach:
                      "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                      "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
                      "force_inpaint": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
-                     "wildcard": ("STRING", {"multiline": True}),
+                     "wildcard": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                      },
                 "optional": {"detailer_hook": ("DETAILER_HOOK",), }
                 }
@@ -647,7 +650,7 @@ class DetailerForEachPipe:
                      "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
                      "force_inpaint": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
                      "basic_pipe": ("BASIC_PIPE", ),
-                     "wildcard": ("STRING", {"multiline": True}),
+                     "wildcard": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                      },
                 "optional": {"detailer_hook": ("DETAILER_HOOK",), }
                 }
@@ -951,7 +954,7 @@ class FaceDetailer:
                      "drop_size": ("INT", {"min": 1, "max": MAX_RESOLUTION, "step": 1, "default": 10}),
 
                      "bbox_detector": ("BBOX_DETECTOR", ),
-                     "wildcard": ("STRING", {"multiline": True}),
+                     "wildcard": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                      },
                 "optional": {
                     "sam_model_opt": ("SAM_MODEL", ),
@@ -2357,14 +2360,8 @@ class LatentSwitch:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                    "select": ("INT", {"default": 1, "min": 1, "max": 4, "step": 1}),
+                    "select": ("INT", {"default": 1, "min": 1, "max": 99999, "step": 1}),
                     "latent1": ("LATENT",),
-                    },
-
-                "optional": {
-                        "latent2_opt": ("LATENT",),
-                        "latent3_opt": ("LATENT",),
-                        "latent4_opt": ("LATENT",),
                     },
                 }
 
@@ -2376,29 +2373,22 @@ class LatentSwitch:
 
     CATEGORY = "ImpactPack/Util"
 
-    def doit(self, select, latent1, latent2_opt=None, latent3_opt=None, latent4_opt=None):
-        if select == 1:
-            return (latent1,)
-        elif select == 2:
-            return (latent2_opt,)
-        elif select == 3:
-            return (latent3_opt,)
+    def doit(self, *args, **kwargs):
+        input_name = f"latent{int(kwargs['select'])}"
+
+        if input_name in kwargs:
+            return (kwargs[input_name],)
         else:
-            return (latent4_opt,)
+            print(f"LatentSwitch: invalid select index ('latent1' is selected)")
+            return (kwargs['latent1'],)
 
 
 class SEGSSwitch:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                    "select": ("INT", {"default": 1, "min": 1, "max": 4, "step": 1}),
-                    "segs": ("SEGS",),
-                    },
-
-                "optional": {
-                        "segs2_opt": ("SEGS",),
-                        "segs3_opt": ("SEGS",),
-                        "segs4_opt": ("SEGS",),
+                    "select": ("INT", {"default": 1, "min": 1, "max": 99999, "step": 1}),
+                    "segs1": ("SEGS",),
                     },
                 }
 
@@ -2410,43 +2400,14 @@ class SEGSSwitch:
 
     CATEGORY = "ImpactPack/Util"
 
-    def doit(self, select, segs, segs2_opt=None, segs3_opt=None, segs4_opt=None):
-        if select == 1:
-            return (segs,)
-        elif select == 2:
-            return (segs2_opt,)
-        elif select == 3:
-            return (segs3_opt,)
+    def doit(self, *args, **kwargs):
+        input_name = f"segs{int(kwargs['select'])}"
+
+        if input_name in kwargs:
+            return (kwargs[input_name],)
         else:
-            return (segs4_opt,)
-
-
-# class SEGPick:
-#     @classmethod
-#     def INPUT_TYPES(s):
-#         return {"required": {
-#                     "select": ("INT", {"default": 1, "min": 1, "max": 99999, "step": 1}),
-#                     "segs": ("SEGS",),
-#                     },
-#                 }
-#
-#     RETURN_TYPES = ("SEGS", )
-#
-#     OUTPUT_NODE = True
-#
-#     FUNCTION = "doit"
-#
-#     CATEGORY = "ImpactPack/Util"
-#
-#     def doit(self, select, segs):
-#         if select == 1:
-#             return (segs,)
-#         elif select == 2:
-#             return (segs2_opt,)
-#         elif select == 3:
-#             return (segs3_opt,)
-#         else:
-#             return (segs4_opt,)
+            print(f"SEGSSwitch: invalid select index ('segs1' is selected)")
+            return (kwargs['segs1'],)
 
 
 class SaveConditioning:
@@ -2532,8 +2493,8 @@ class ImpactWildcardProcessor:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                        "wildcard_text": ("STRING", {"multiline": True}),
-                        "populated_text": ("STRING", {"multiline": True}),
+                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                         "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
                     },
                 }
@@ -2553,8 +2514,8 @@ class ImpactWildcardEncode:
         return {"required": {
                         "model": ("MODEL",),
                         "clip": ("CLIP",),
-                        "wildcard_text": ("STRING", {"multiline": True}),
-                        "populated_text": ("STRING", {"multiline": True}),
+                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                         "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
                         "Select to add LoRA": (["Select the LoRA to add to the text"] + folder_paths.get_filename_list("loras"), ),
                     },
@@ -2770,13 +2731,13 @@ class StringSelector:
         return (selected, )
 
 
-from impact.logics import AnyType
+from impact.utils import any_typ
 
 class ImpactLogger:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                        "data": (AnyType("*"), ""),
+                        "data": (any_typ, ""),
                     },
                 "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
                 }
@@ -2815,7 +2776,7 @@ class ImpactDummyInput:
 
     CATEGORY = "ImpactPack/Debug"
 
-    RETURN_TYPES = (AnyType("*"),)
+    RETURN_TYPES = (any_typ,)
     FUNCTION = "doit"
 
     def doit(self):

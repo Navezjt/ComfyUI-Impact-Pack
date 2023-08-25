@@ -191,27 +191,111 @@ app.registerExtension({
 			impactProgressBadge.addStatusHandler(nodeType);
 		}
 
-        if (nodeData.name === 'ImpactMakeImageList') {
+        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
+            var input_name = "input";
+
+            switch(nodeData.name) {
+            case 'ImpactMakeImageList':
+                input_name = "image";
+                break;
+
+            case 'LatentSwitch':
+                input_name = "input";
+                break;
+
+            case 'SEGSSwitch':
+                input_name = "input";
+                break;
+
+            case 'ImpactSwitch':
+                input_name = "input";
+            }
+
             const onConnectionsChange = nodeType.prototype.onConnectionsChange
             nodeType.prototype.onConnectionsChange = function (type, index, connected, link_info) {
-                if (!connected && this.inputs.length > 1) {
-                    if (this.widgets) {
-                        const w = this.widgets.find((w) => w.name === this.inputs[index].name)
-                        if (w) {
-                            w.onRemoved?.()
-                            this.widgets.length = this.widgets.length - 1
+                if(!link_info)
+                    return;
+
+                if(type == 2) {
+                    // connect output
+                    if(connected){
+                        if(this.outputs[0].type == '*'){
+                            if(link_info.type == '*') {
+                                this.disconnectOutput(link_info.origin_slot);
+                            }
+                            else {
+                                // propagate type
+                                this.outputs[0].type = link_info.type;
+                                this.outputs[0].label = link_info.type;
+                                this.outputs[0].name = link_info.type;
+
+                                for(let i in this.inputs) {
+                                    if(this.inputs[i].name != 'select')
+                                        this.inputs[i].type = link_info.type;
+                                }
+                            }
                         }
                     }
-                    this.removeInput(index);
+
+                    return;
+                }
+                else {
+                    // connect input
+                    if(this.inputs[0].type == '*'){
+                        const node = app.graph.getNodeById(link_info.origin_id);
+                        let origin_type = node.outputs[link_info.origin_slot].type;
+
+                        if(origin_type == '*') {
+                            this.disconnectInput(link_info.target_slot);
+                            return;
+                        }
+
+                        for(let i in this.inputs) {
+                            if(this.inputs[i].name != 'select')
+                                this.inputs[i].type = origin_type;
+                        }
+
+                        this.outputs[0].type = origin_type;
+                        this.outputs[0].label = origin_type;
+                        this.outputs[0].name = origin_type;
+                    }
                 }
 
+                let select_slot = this.inputs.find(x => x.name == "select");
+
+                if (!connected && (select_slot && this.inputs.length > 2) || (!select_slot && this.inputs.length > 1)) {
+                    const stackTrace = new Error().stack;
+
+                    if(
+                        !stackTrace.includes('LGraphNode.prototype.connect') && // for touch device
+                        !stackTrace.includes('LGraphNode.connect') && // for mouse device
+                        !stackTrace.includes('loadGraphData') &&
+                        this.inputs[index].name != 'select') {
+                        this.removeInput(index);
+                    }
+                }
+
+				let slot_i = 1;
                 for (let i = 0; i < this.inputs.length; i++) {
-                    this.inputs[i].label = `image${i + 1}`
-                    this.inputs[i].name = `image${i + 1}`
+                    if(this.inputs[i].name != 'select') {
+	                    this.inputs[i].label = `${input_name}${slot_i}`
+	                    this.inputs[i].name = `${input_name}${slot_i}`
+                        slot_i++;
+                    }
                 }
 
-                if (this.inputs[this.inputs.length - 1].link != undefined) {
-                    this.addInput(`image${this.inputs.length + 1}`, 'IMAGE');
+				let last_slot = this.inputs[this.inputs.length - 1];
+                if (
+                    (last_slot.name == 'select' && this.inputs[this.inputs.length - 2].link != undefined)
+                    || (last_slot.name != 'select' && last_slot.link != undefined)) {
+                        this.addInput(`${input_name}${slot_i}`, this.outputs[0].type);
+                }
+
+                if(this.widgets) {
+                    this.widgets[0].options.max = select_slot?this.inputs.length-2:this.inputs.length-1;
+                    this.widgets[0].value = Math.min(this.widgets[0].value, this.widgets[0].options.max);
+                    if(this.widgets[0].options.max > 0 && this.widgets[0].value == 0)
+                        this.widgets[0].value = 1;
                 }
             }
         }
