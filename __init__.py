@@ -12,13 +12,12 @@ import sys
 
 comfy_path = os.path.dirname(folder_paths.__file__)
 impact_path = os.path.join(os.path.dirname(__file__))
-subpack_path = os.path.join(os.path.dirname(__file__), "subpack")
+subpack_path = os.path.join(os.path.dirname(__file__), "impact_subpack")
 modules_path = os.path.join(os.path.dirname(__file__), "modules")
 wildcards_path = os.path.join(os.path.dirname(__file__), "wildcards")
 custom_wildcards_path = os.path.join(os.path.dirname(__file__), "custom_wildcards")
 
 sys.path.append(modules_path)
-sys.path.append(subpack_path)
 
 
 import impact.config
@@ -34,10 +33,11 @@ def do_install():
 
 
 # ensure dependency
-if impact.config.get_config()['dependency_version'] < impact.config.dependency_version:
+if impact.config.get_config()['dependency_version'] < impact.config.dependency_version or not os.path.exists(subpack_path):
     print(f"## ComfyUI-Impact-Pack: Updating dependencies")
     do_install()
 
+sys.path.append(subpack_path)
 
 # Core
 # recheck dependencies for colab
@@ -64,7 +64,6 @@ except:
     do_install()
 
 import impact.impact_server  # to load server api
-
 
 def setup_js():
     import nodes
@@ -121,15 +120,19 @@ NODE_CLASS_MAPPINGS = {
     "FaceDetailerPipe": FaceDetailerPipe,
 
     "ToDetailerPipe": ToDetailerPipe,
+    "ToDetailerPipeSDXL": ToDetailerPipeSDXL,
     "FromDetailerPipe": FromDetailerPipe,
     "FromDetailerPipe_v2": FromDetailerPipe_v2,
+    "FromDetailerPipeSDXL": FromDetailerPipe_SDXL,
     "ToBasicPipe": ToBasicPipe,
     "FromBasicPipe": FromBasicPipe,
     "FromBasicPipe_v2": FromBasicPipe_v2,
     "BasicPipeToDetailerPipe": BasicPipeToDetailerPipe,
+    "BasicPipeToDetailerPipeSDXL": BasicPipeToDetailerPipeSDXL,
     "DetailerPipeToBasicPipe": DetailerPipeToBasicPipe,
     "EditBasicPipe": EditBasicPipe,
     "EditDetailerPipe": EditDetailerPipe,
+    "EditDetailerPipeSDXL": EditDetailerPipeSDXL,
 
     "LatentPixelScale": LatentPixelScale,
     "PixelKSampleUpscalerProvider": PixelKSampleUpscalerProvider,
@@ -163,6 +166,7 @@ NODE_CLASS_MAPPINGS = {
     "ONNXDetectorSEGS": ONNXDetectorForEach,
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
+    "ImpactControlNetApplySEGS": ControlNetApplySEGS,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
     "SegmDetectorCombined_v2": SegmDetectorCombined,
@@ -240,6 +244,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ONNXDetectorSEGS": "ONNX Detector (SEGS)",
     "ImpactSimpleDetectorSEGS": "Simple Detector (SEGS)",
     "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
+    "ImpactControlNetApplySEGS": "ControlNetApply (SEGS)",
 
     "BboxDetectorCombined_v2": "BBOX Detector (combined)",
     "SegmDetectorCombined_v2": "SEGM Detector (combined)",
@@ -259,6 +264,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SAMDetectorCombined": "SAMDetector (combined)",
     "SAMDetectorSegmented": "SAMDetector (segmented)",
     "FaceDetailerPipe": "FaceDetailer (pipe)",
+
+    "FromDetailerPipeSDXL": "FromDetailer (SDXL/pipe)",
+    "BasicPipeToDetailerPipeSDXL": "BasicPipe -> DetailerPipe (SDXL)",
+    "EditDetailerPipeSDXL": "Edit DetailerPipe (SDXL)",
 
     "BasicPipeToDetailerPipe": "BasicPipe -> DetailerPipe",
     "DetailerPipeToBasicPipe": "DetailerPipe -> BasicPipe",
