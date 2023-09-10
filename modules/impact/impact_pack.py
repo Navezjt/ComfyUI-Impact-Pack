@@ -1,8 +1,6 @@
 import os
 import sys
 
-import torch
-
 import folder_paths
 import comfy.samplers
 import comfy.sd
@@ -13,14 +11,13 @@ import piexif
 import math
 import zipfile
 import re
-from PIL import ImageDraw
 
 import impact.wildcards
 from server import PromptServer
 
 from impact.utils import *
 import impact.core as core
-from impact.core import SEG, NO_BBOX_DETECTOR, NO_SEGM_DETECTOR
+from impact.core import SEG
 from impact.config import MAX_RESOLUTION, latent_letter_path
 from PIL import Image
 import numpy as np
@@ -28,7 +25,6 @@ import hashlib
 import json
 import safetensors.torch
 from PIL.PngImagePlugin import PngInfo
-import latent_preview
 import comfy.model_management
 
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
@@ -77,13 +73,10 @@ class CLIPSegDetectorProvider:
     CATEGORY = "ImpactPack/Util"
 
     def doit(self, text, blur, threshold, dilation_factor):
-        try:
-            import custom_nodes.clipseg
+        if "CLIPSeg" in nodes.NODE_CLASS_MAPPINGS:
             return (core.BBoxDetectorBasedOnCLIPSeg(text, blur, threshold, dilation_factor), )
-        except Exception as e:
+        else:
             print("[ERROR] CLIPSegToBboxDetector: CLIPSeg custom node isn't installed. You must install biegert/ComfyUI-CLIPSeg extension to use this node.")
-            print(f"\t{e}")
-            pass
 
 
 class SAMLoader:
@@ -174,7 +167,10 @@ class SEGSDetailer:
                     }
                 }
 
-    RETURN_TYPES = ("SEGS", )
+    RETURN_TYPES = ("SEGS", "IMAGE")
+    RETURN_NAMES = ("segs", "cnet_images")
+    OUTPUT_IS_LIST = (False, True)
+
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Detailer"
@@ -190,6 +186,7 @@ class SEGSDetailer:
             refiner_model, refiner_clip, _, refiner_positive, refiner_negative = refiner_basic_pipe_opt
 
         new_segs = []
+        cnet_pil_list = []
 
         for seg in segs[1]:
             cropped_image = seg.cropped_image if seg.cropped_image is not None \
@@ -206,12 +203,15 @@ class SEGSDetailer:
             else:
                 cropped_mask = None
 
-            enhanced_pil = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for, max_size,
-                                               seg.bbox, seed, steps, cfg, sampler_name, scheduler,
-                                               positive, negative, denoise, cropped_mask, force_inpaint,
-                                               refiner_ratio=refiner_ratio, refiner_model=refiner_model,
-                                               refiner_clip=refiner_clip, refiner_positive=refiner_positive, refiner_negative=refiner_negative,
-                                               control_net_wrapper=seg.control_net_wrapper)
+            enhanced_pil, cnet_pil = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for, max_size,
+                                                         seg.bbox, seed, steps, cfg, sampler_name, scheduler,
+                                                         positive, negative, denoise, cropped_mask, force_inpaint,
+                                                         refiner_ratio=refiner_ratio, refiner_model=refiner_model,
+                                                         refiner_clip=refiner_clip, refiner_positive=refiner_positive, refiner_negative=refiner_negative,
+                                                         control_net_wrapper=seg.control_net_wrapper)
+
+            if cnet_pil is not None:
+                cnet_pil_list.append(cnet_pil)
 
             if enhanced_pil is None:
                 new_cropped_image = cropped_image
@@ -221,15 +221,19 @@ class SEGSDetailer:
             new_seg = SEG(new_cropped_image, seg.cropped_mask, seg.confidence, seg.crop_region, seg.bbox, seg.label, None)
             new_segs.append(new_seg)
 
-        return segs[0], new_segs
+        return (segs[0], new_segs), cnet_pil_list
 
     def doit(self, image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
              denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio=None, refiner_basic_pipe_opt=None):
 
-        segs = SEGSDetailer.do_detail(image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
-                                      scheduler, denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio, refiner_basic_pipe_opt)
+        segs, cnet_pil_list = SEGSDetailer.do_detail(image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
+                                                     scheduler, denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio, refiner_basic_pipe_opt)
 
-        return (segs, )
+        # set fallback image
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return (segs, cnet_pil_list)
 
 
 class SEGSPaste:
@@ -328,7 +332,14 @@ class SEGSLabelFilter:
     def INPUT_TYPES(s):
         return {"required": {
                         "segs": ("SEGS", ),
-                        "preset": (['all', 'hand', 'face', 'short_sleeved_shirt', 'long_sleeved_shirt', 'short_sleeved_outwear', 'long_sleeved_outwear', 'vest', 'sling', 'shorts', 'trousers', 'skirt', 'short_sleeved_dress', 'long_sleeved_dress', 'vest_dress', 'sling_dress'], ),
+                        "preset": ([
+                                       'all', 'hand', 'face', 'mouth', 'eyes', 'eyebrows', 'pupils',
+                                       'left_eyebrow', 'left_eye', 'left_pupil',
+                                       'right_eyebrow', 'right_eye', 'right_pupil',
+                                       'short_sleeved_shirt',
+                                       'long_sleeved_shirt', 'short_sleeved_outwear', 'long_sleeved_outwear',
+                                       'vest', 'sling', 'shorts', 'trousers', 'skirt', 'short_sleeved_dress',
+                                       'long_sleeved_dress', 'vest_dress', 'sling_dress'], ),
                         "labels": ("STRING", {"multiline": True, "placeholder": "List the types of segments to be allowed, separated by commas"}),
                      },
                 }
@@ -351,6 +362,12 @@ class SEGSLabelFilter:
 
             for x in segs[1]:
                 if x.label in labels:
+                    res_segs.append(x)
+                elif 'eyes' in labels and x.label in ['left_eye', 'right_eye']:
+                    res_segs.append(x)
+                elif 'eyebrows' in labels and x.label in ['left_eyebrow', 'right_eyebrow']:
+                    res_segs.append(x)
+                elif 'pupils' in labels and x.label in ['left_pupil', 'right_pupil']:
                     res_segs.append(x)
                 else:
                     remained_segs.append(x)
@@ -596,6 +613,7 @@ class DetailerForEach:
         enhanced_alpha_list = []
         enhanced_list = []
         cropped_list = []
+        cnet_pil_list = []
 
         for seg in segs[1]:
             cropped_image = seg.cropped_image if seg.cropped_image is not None \
@@ -613,12 +631,15 @@ class DetailerForEach:
             else:
                 cropped_mask = None
 
-            enhanced_pil = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for_bbox, max_size,
-                                               seg.bbox, seed, steps, cfg, sampler_name, scheduler,
-                                               positive, negative, denoise, cropped_mask, force_inpaint, wildcard_opt, detailer_hook,
-                                               refiner_ratio=refiner_ratio, refiner_model=refiner_model,
-                                               refiner_clip=refiner_clip, refiner_positive=refiner_positive,
-                                               refiner_negative=refiner_negative, control_net_wrapper=seg.control_net_wrapper)
+            enhanced_pil, cnet_pil = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for_bbox, max_size,
+                                                         seg.bbox, seed, steps, cfg, sampler_name, scheduler,
+                                                         positive, negative, denoise, cropped_mask, force_inpaint, wildcard_opt, detailer_hook,
+                                                         refiner_ratio=refiner_ratio, refiner_model=refiner_model,
+                                                         refiner_clip=refiner_clip, refiner_positive=refiner_positive,
+                                                         refiner_negative=refiner_negative, control_net_wrapper=seg.control_net_wrapper)
+
+            if cnet_pil is not None:
+                cnet_pil_list.append(cnet_pil)
 
             if not (enhanced_pil is None):
                 # don't latent composite-> converting to latent caused poor quality
@@ -644,12 +665,12 @@ class DetailerForEach:
         enhanced_list.sort(key=lambda x: x.shape, reverse=True)
         enhanced_alpha_list.sort(key=lambda x: x.shape, reverse=True)
 
-        return image_tensor, cropped_list, enhanced_list, enhanced_alpha_list
+        return image_tensor, cropped_list, enhanced_list, enhanced_alpha_list, cnet_pil_list
 
     def doit(self, image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
              scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard, detailer_hook=None):
 
-        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
+        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps,
                                       cfg, sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard, detailer_hook)
@@ -685,7 +706,9 @@ class DetailerForEachPipe:
                     }
                 }
 
-    RETURN_TYPES = ("IMAGE", )
+    RETURN_TYPES = ("IMAGE", "SEGS", "BASIC_PIPE", "IMAGE")
+    RETURN_NAMES = ("image", "segs", "basic_pipe", "cnet_images")
+    OUTPUT_IS_LIST = (False, False, False, True)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Detailer"
@@ -700,14 +723,18 @@ class DetailerForEachPipe:
         else:
             refiner_model, refiner_clip, _, refiner_positive, refiner_negative = refiner_basic_pipe_opt
 
-        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
+        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard, detailer_hook,
                                       refiner_ratio=refiner_ratio, refiner_model=refiner_model,
                                       refiner_clip=refiner_clip, refiner_positive=refiner_positive, refiner_negative=refiner_negative)
 
-        return (enhanced_img, )
+        # set fallback image
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return (enhanced_img, segs, basic_pipe, cnet_pil_list)
 
 
 class KSamplerProvider:
@@ -1000,9 +1027,9 @@ class FaceDetailer:
                     "detailer_hook": ("DETAILER_HOOK",)
                 }}
 
-    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "DETAILER_PIPE", )
-    RETURN_NAMES = ("image", "cropped_refined", "cropped_enhanced_alpha", "mask", "detailer_pipe")
-    OUTPUT_IS_LIST = (False, True, True, False, False)
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "DETAILER_PIPE", "IMAGE")
+    RETURN_NAMES = ("image", "cropped_refined", "cropped_enhanced_alpha", "mask", "detailer_pipe", "cnet_images")
+    OUTPUT_IS_LIST = (False, True, True, False, False, True)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Simple"
@@ -1033,7 +1060,7 @@ class FaceDetailer:
             segm_mask = core.segs_to_combined_mask(segm_segs)
             segs = core.segs_bitwise_and_mask(segs, segm_mask)
 
-        enhanced_img, _, cropped_enhanced, cropped_enhanced_alpha = \
+        enhanced_img, _, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for_bbox, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard_opt, detailer_hook,
@@ -1050,7 +1077,10 @@ class FaceDetailer:
         if len(cropped_enhanced_alpha) == 0:
             cropped_enhanced_alpha = [empty_pil_tensor()]
 
-        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask,
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, cnet_pil_list
 
     def doit(self, image, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
              positive, negative, denoise, feather, noise_mask, force_inpaint,
@@ -1058,7 +1088,7 @@ class FaceDetailer:
              sam_detection_hint, sam_dilation, sam_threshold, sam_bbox_expansion, sam_mask_hint_threshold,
              sam_mask_hint_use_negative, drop_size, bbox_detector, wildcard, sam_model_opt=None, segm_detector_opt=None, detailer_hook=None):
 
-        enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask = FaceDetailer.enhance_face(
+        enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, cnet_pil_list = FaceDetailer.enhance_face(
             image, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, denoise, feather, noise_mask, force_inpaint,
             bbox_threshold, bbox_dilation, bbox_crop_factor,
@@ -1066,7 +1096,7 @@ class FaceDetailer:
             sam_mask_hint_use_negative, drop_size, bbox_detector, segm_detector_opt, sam_model_opt, wildcard, detailer_hook)
 
         pipe = (model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector_opt, sam_model_opt, detailer_hook, None, None, None, None)
-        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, pipe
+        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, pipe, cnet_pil_list
 
 
 class LatentPixelScale:
@@ -1288,14 +1318,11 @@ class PixelTiledKSampleUpscalerProvider:
     CATEGORY = "ImpactPack/Upscale"
 
     def doit(self, scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt=None, pk_hook_opt=None):
-        try:
-            import custom_nodes.ComfyUI_TiledKSampler.nodes
+        if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
             upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_size=max(tile_width, tile_height))
             return (upscaler, )
-        except Exception as e:
+        else:
             print("[ERROR] PixelTiledKSampleUpscalerProvider: ComfyUI_TiledKSampler custom node isn't installed. You must install BlenderNeko/ComfyUI_TiledKSampler extension to use this node.")
-            print(f"\t{e}")
-            pass
 
 
 class PixelTiledKSampleUpscalerProviderPipe:
@@ -1328,15 +1355,12 @@ class PixelTiledKSampleUpscalerProviderPipe:
     CATEGORY = "ImpactPack/Upscale"
 
     def doit(self, scale_method, seed, steps, cfg, sampler_name, scheduler, denoise, tile_width, tile_height, tiling_strategy, basic_pipe, upscale_model_opt=None, pk_hook_opt=None):
-        try:
-            import custom_nodes.ComfyUI_TiledKSampler.nodes
+        if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
             model, _, vae, positive, negative = basic_pipe
             upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_size=max(tile_width, tile_height))
             return (upscaler, )
-        except Exception as e:
+        else:
             print("[ERROR] PixelTiledKSampleUpscalerProviderPipe: ComfyUI_TiledKSampler custom node isn't installed. You must install BlenderNeko/ComfyUI_TiledKSampler extension to use this node.")
-            print(f"\t{e}")
-            pass
 
 
 class PixelKSampleUpscalerProvider:
@@ -1630,9 +1654,9 @@ class FaceDetailerPipe:
                      },
                 }
 
-    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "DETAILER_PIPE", )
-    RETURN_NAMES = ("image", "cropped_refined", "cropped_enhanced_alpha", "mask", "detailer_pipe")
-    OUTPUT_IS_LIST = (False, True, True, False, False)
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "DETAILER_PIPE", "IMAGE")
+    RETURN_NAMES = ("image", "cropped_refined", "cropped_enhanced_alpha", "mask", "detailer_pipe", "cnet_images")
+    OUTPUT_IS_LIST = (False, True, True, False, False, True)
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Simple"
@@ -1645,7 +1669,7 @@ class FaceDetailerPipe:
         model, clip, vae, positive, negative, wildcard, bbox_detector, segm_detector, sam_model_opt, detailer_hook, \
             refiner_model, refiner_clip, refiner_positive, refiner_negative = detailer_pipe
 
-        enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask = FaceDetailer.enhance_face(
+        enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, cnet_pil_list = FaceDetailer.enhance_face(
             image, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, denoise, feather, noise_mask, force_inpaint,
             bbox_threshold, bbox_dilation, bbox_crop_factor,
@@ -1660,13 +1684,16 @@ class FaceDetailerPipe:
         if len(cropped_enhanced_alpha) == 0:
             cropped_enhanced_alpha = [empty_pil_tensor()]
 
-        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, detailer_pipe
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return enhanced_img, cropped_enhanced, cropped_enhanced_alpha, mask, detailer_pipe, cnet_pil_list
 
 
 class DetailerForEachTest(DetailerForEach):
-    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", )
-    RETURN_NAMES = ("image", "cropped", "cropped_refined", "cropped_refined_alpha", )
-    OUTPUT_IS_LIST = (False, True, True, True, )
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("image", "cropped", "cropped_refined", "cropped_refined_alpha", "cnet_images")
+    OUTPUT_IS_LIST = (False, True, True, True, True)
 
     FUNCTION = "doit"
 
@@ -1675,7 +1702,7 @@ class DetailerForEachTest(DetailerForEach):
     def doit(self, image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
              scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard, detailer_hook=None):
 
-        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
+        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps,
                                       cfg, sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard, detailer_hook)
@@ -1690,13 +1717,16 @@ class DetailerForEachTest(DetailerForEach):
         if len(cropped_enhanced_alpha) == 0:
             cropped_enhanced_alpha = [empty_pil_tensor()]
 
-        return enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list
 
 
 class DetailerForEachTestPipe(DetailerForEachPipe):
-    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", )
-    RETURN_NAMES = ("image", "cropped", "cropped_refined", "cropped_refined_alpha", )
-    OUTPUT_IS_LIST = (False, True, True, True)
+    RETURN_TYPES = ("IMAGE", "SEGS", "BASIC_PIPE", "IMAGE", "IMAGE", "IMAGE", "IMAGE", )
+    RETURN_NAMES = ("image", "segs", "basic_pipe", "cropped", "cropped_refined", "cropped_refined_alpha", 'cnet_images')
+    OUTPUT_IS_LIST = (False, False, False, True, True, True, True)
 
     FUNCTION = "doit"
 
@@ -1712,7 +1742,7 @@ class DetailerForEachTestPipe(DetailerForEachPipe):
         else:
             refiner_model, refiner_clip, _, refiner_positive, refiner_negative = refiner_basic_pipe_opt
 
-        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha = \
+        enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg,
                                       sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard, detailer_hook,
@@ -1730,7 +1760,10 @@ class DetailerForEachTestPipe(DetailerForEachPipe):
         if len(cropped_enhanced_alpha) == 0:
             cropped_enhanced_alpha = [empty_pil_tensor()]
 
-        return enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha
+        if len(cnet_pil_list) == 0:
+            cnet_pil_list = [empty_pil_tensor()]
+
+        return enhanced_img, segs, basic_pipe, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list
 
 
 class EmptySEGS:
@@ -1908,6 +1941,38 @@ class SubtractMaskForEach:
                     result.append(base_segs)
 
         return ((base_segs[0], result),)
+
+
+class MediaPipeFaceMeshToSEGS:
+    @classmethod
+    def INPUT_TYPES(s):
+        bool_widget = ("BOOLEAN", {"default": True, "label_on": "Enabled", "label_off": "Disabled"})
+        return {"required": {
+                                "image": ("IMAGE",),
+                                "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10, "step": 0.1}),
+                                "bbox_fill": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
+                                "crop_min_size": ("INT", {"min": 10, "max": MAX_RESOLUTION, "step": 1, "default": 50}),
+                                "drop_size": ("INT", {"min": 1, "max": MAX_RESOLUTION, "step": 1, "default": 1}),
+                                "dilation": ("INT", {"default": 0, "min": 0, "max": 255, "step": 1}),
+                                "face": bool_widget,
+                                "mouth": bool_widget,
+                                "left_eyebrow": bool_widget,
+                                "left_eye": bool_widget,
+                                "left_pupil": bool_widget,
+                                "right_eyebrow": bool_widget,
+                                "right_eye": bool_widget,
+                                "right_pupil": bool_widget,
+                             }
+                }
+
+    RETURN_TYPES = ("SEGS",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Operation"
+
+    def doit(self, image, crop_factor, bbox_fill, crop_min_size, drop_size, dilation, face, mouth, left_eyebrow, left_eye, left_pupil, right_eyebrow, right_eye, right_pupil):
+        result = core.mediapipe_facemesh_to_segs(image, crop_factor, bbox_fill, crop_min_size, drop_size, dilation, face, mouth, left_eyebrow, left_eye, left_pupil, right_eyebrow, right_eye, right_pupil)
+        return (result, )
 
 
 class MaskToSEGS:
@@ -2234,7 +2299,12 @@ class LatentReceiver:
 
         return {'filename': filename, 'subfolder': subfolder, 'type': file_type}
 
-    def doit(self, latent, link_id):
+    def doit(self, **kwargs):
+        if 'latent' not in kwargs:
+            return (torch.zeros([1, 4, 8, 8]), )
+
+        latent = kwargs['latent']
+
         latent_name = latent
         latent_path = folder_paths.get_annotated_filepath(latent_name)
 
@@ -2577,6 +2647,7 @@ class ImpactWildcardProcessor:
                         "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                         "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                         "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
+                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     },
                 }
 
@@ -2585,7 +2656,7 @@ class ImpactWildcardProcessor:
     RETURN_TYPES = ("STRING", )
     FUNCTION = "doit"
 
-    def doit(self, wildcard_text, populated_text, mode):
+    def doit(self, wildcard_text, populated_text, mode, seed):
         return (populated_text, )
 
 
@@ -2599,17 +2670,20 @@ class ImpactWildcardEncode:
                         "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
                         "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
                         "Select to add LoRA": (["Select the LoRA to add to the text"] + folder_paths.get_filename_list("loras"), ),
+                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     },
                 }
 
     CATEGORY = "ImpactPack/Prompt"
 
-    RETURN_TYPES = ("MODEL", "CLIP", "CONDITIONING", )
+    RETURN_TYPES = ("MODEL", "CLIP", "CONDITIONING", "STRING")
+    RETURN_NAMES = ("model", "clip", "conditioning", "populated_text")
     FUNCTION = "doit"
 
     def doit(self, *args, **kwargs):
-        model, clip, conditioning = impact.wildcards.process_with_loras(kwargs['populated_text'], kwargs['model'], kwargs['clip'])
-        return (model, clip, conditioning)
+        populated = kwargs['populated_text']
+        model, clip, conditioning = impact.wildcards.process_with_loras(populated, kwargs['model'], kwargs['clip'])
+        return (model, clip, conditioning, populated)
 
 
 class ReencodeLatent:

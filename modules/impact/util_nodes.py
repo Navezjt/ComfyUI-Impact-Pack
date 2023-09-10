@@ -5,8 +5,11 @@ class GeneralSwitch:
     def INPUT_TYPES(s):
         return {"required": {
                     "select": ("INT", {"default": 1, "min": 1, "max": 999999, "step": 1}),
-                    "input1": (any_typ,),
+                    "sel_mode": ("BOOLEAN", {"default": True, "label_on": "select_on_prompt", "label_off": "select_on_execution", "forceInput": False}),
                     },
+                "optional": {
+                    "input1": (any_typ,),
+                    }
                 }
 
     RETURN_TYPES = (any_typ, )
@@ -20,8 +23,35 @@ class GeneralSwitch:
         if input_name in kwargs:
             return (kwargs[input_name],)
         else:
-            print(f"ImpactSwitch: invalid select index ('input1' is selected)")
-            return (kwargs['input1'],)
+            print(f"ImpactSwitch: invalid select index (ignored)")
+            return (None,)
+
+
+class GeneralInversedSwitch:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                    "select": ("INT", {"default": 1, "min": 1, "max": 999999, "step": 1}),
+                    "input": (any_typ,),
+                    },
+                "hidden": {"unique_id": "UNIQUE_ID"},
+                }
+
+    RETURN_TYPES = tuple([any_typ] * 100)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, select, input, unique_id):
+        res = []
+
+        for i in range(0, select):
+            if select == i+1:
+                res.append(input)
+            else:
+                res.append(None)
+
+        return res
 
 
 class ImageMaskSwitch:

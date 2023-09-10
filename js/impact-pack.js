@@ -191,27 +191,12 @@ app.registerExtension({
 			impactProgressBadge.addStatusHandler(nodeType);
 		}
 
-        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
-            var input_name = "input";
+        if(nodeData.name === 'ImpactInversedSwitch') {
+            nodeData.output = ['*'];
+            nodeData.output_is_list = [false];
+            nodeData.output_name = ['output1'];
 
-            switch(nodeData.name) {
-            case 'ImpactMakeImageList':
-                input_name = "image";
-                break;
-
-            case 'LatentSwitch':
-                input_name = "input";
-                break;
-
-            case 'SEGSSwitch':
-                input_name = "input";
-                break;
-
-            case 'ImpactSwitch':
-                input_name = "input";
-            }
-
-            const onConnectionsChange = nodeType.prototype.onConnectionsChange
+            const onConnectionsChange = nodeType.prototype.onConnectionsChange;
             nodeType.prototype.onConnectionsChange = function (type, index, connected, link_info) {
                 if(!link_info)
                     return;
@@ -236,8 +221,6 @@ app.registerExtension({
                             }
                         }
                     }
-
-                    return;
                 }
                 else {
                     // connect input
@@ -259,11 +242,127 @@ app.registerExtension({
                         this.outputs[0].label = origin_type;
                         this.outputs[0].name = origin_type;
                     }
+
+                    return;
+                }
+
+                if (!connected && this.outputs.length > 1) {
+                    const stackTrace = new Error().stack;
+
+                    if(
+                        !stackTrace.includes('LGraphNode.prototype.connect') && // for touch device
+                        !stackTrace.includes('LGraphNode.connect') && // for mouse device
+                        !stackTrace.includes('loadGraphData')) {
+                            if(this.outputs[link_info.origin_slot].links.length == 0)
+                                this.removeOutput(link_info.origin_slot);
+                    }
+                }
+
+				let slot_i = 1;
+                for (let i = 0; i < this.outputs.length; i++) {
+                    this.outputs[i].label = `output${slot_i}`
+                    this.outputs[i].name = `output${slot_i}`
+                    slot_i++;
+                }
+
+				let last_slot = this.outputs[this.outputs.length - 1];
+                if (last_slot.slot_index == link_info.origin_slot) {
+                    this.addOutput(`output${slot_i}`, this.outputs[0].type);
                 }
 
                 let select_slot = this.inputs.find(x => x.name == "select");
+                if(this.widgets) {
+                    this.widgets[0].options.max = select_slot?this.outputs.length-2:this.outputs.length-1;
+                    this.widgets[0].value = Math.min(this.widgets[0].value, this.widgets[0].options.max);
+                    if(this.widgets[0].options.max > 0 && this.widgets[0].value == 0)
+                        this.widgets[0].value = 1;
+                }
+            }
+        }
 
-                if (!connected && (select_slot && this.inputs.length > 2) || (!select_slot && this.inputs.length > 1)) {
+        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
+            var input_name = "input";
+
+            switch(nodeData.name) {
+            case 'ImpactMakeImageList':
+                input_name = "image";
+                break;
+
+            case 'LatentSwitch':
+                input_name = "input";
+                break;
+
+            case 'SEGSSwitch':
+                input_name = "input";
+                break;
+
+            case 'ImpactSwitch':
+                input_name = "input";
+            }
+
+            const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+            nodeType.prototype.onConnectionsChange = function (type, index, connected, link_info) {
+                if(!link_info)
+                    return;
+
+                if(type == 2) {
+                    // connect output
+                    if(connected){
+                        if(this.outputs[0].type == '*'){
+                            if(link_info.type == '*') {
+                                this.disconnectOutput(link_info.origin_slot);
+                            }
+                            else {
+                                // propagate type
+                                this.outputs[0].type = link_info.type;
+                                this.outputs[0].label = link_info.type;
+                                this.outputs[0].name = link_info.type;
+
+                                for(let i in this.inputs) {
+                                    let input_i = this.inputs[i];
+                                    if(input_i.name != 'select' && input_i.name != 'sel_mode')
+                                        input_i.type = link_info.type;
+                                }
+                            }
+                        }
+                    }
+
+                    return;
+                }
+                else {
+                    // connect input
+                    if(this.inputs[index].name == 'select' || this.inputs[index].name == 'sel_mode')
+                        return;
+
+                    if(this.inputs[0].type == '*'){
+                        const node = app.graph.getNodeById(link_info.origin_id);
+                        let origin_type = node.outputs[link_info.origin_slot].type;
+
+                        if(origin_type == '*') {
+                            this.disconnectInput(link_info.target_slot);
+                            return;
+                        }
+
+                        for(let i in this.inputs) {
+                            let input_i = this.inputs[i];
+                            if(input_i.name != 'select' && input_i.name != 'sel_mode')
+                                input_i.type = origin_type;
+                        }
+
+                        this.outputs[0].type = origin_type;
+                        this.outputs[0].label = origin_type;
+                        this.outputs[0].name = origin_type;
+                    }
+                }
+
+                let select_slot = this.inputs.find(x => x.name == "select");
+                let mode_slot = this.inputs.find(x => x.name == "sel_mode");
+
+                let converted_count = 0;
+                converted_count += select_slot?1:0;
+                converted_count += mode_slot?1:0;
+
+                if (!connected && (this.inputs.length > 1+converted_count)) {
                     const stackTrace = new Error().stack;
 
                     if(
@@ -277,17 +376,18 @@ app.registerExtension({
 
 				let slot_i = 1;
                 for (let i = 0; i < this.inputs.length; i++) {
-                    if(this.inputs[i].name != 'select') {
-	                    this.inputs[i].label = `${input_name}${slot_i}`
-	                    this.inputs[i].name = `${input_name}${slot_i}`
+                    let input_i = this.inputs[i];
+                    if(input_i.name != 'select'&& input_i.name != 'sel_mode') {
+	                    input_i.label = `${input_name}${slot_i}`
+	                    input_i.name = `${input_name}${slot_i}`
                         slot_i++;
                     }
                 }
 
 				let last_slot = this.inputs[this.inputs.length - 1];
                 if (
-                    (last_slot.name == 'select' && this.inputs[this.inputs.length - 2].link != undefined)
-                    || (last_slot.name != 'select' && last_slot.link != undefined)) {
+                    (last_slot.name == 'select' && last_slot.name != 'sel_mode' && this.inputs[this.inputs.length - 2].link != undefined)
+                    || (last_slot.name != 'select' && last_slot.name != 'sel_mode' && last_slot.link != undefined)) {
                         this.addInput(`${input_name}${slot_i}`, this.outputs[0].type);
                 }
 
@@ -417,35 +517,40 @@ app.registerExtension({
             let populate_getter = node.widgets[1].__lookupGetter__('value');
             let populate_setter = node.widgets[1].__lookupSetter__('value');
 
+			const wildcard_text_widget = node.widgets.find((w) => w.name == 'wildcard_text');
+			const populated_text_widget = node.widgets.find((w) => w.name == 'populated_text');
+			const mode_widget = node.widgets.find((w) => w.name == 'mode');
+			const seed_widget = node.widgets.find((w) => w.name == 'seed');
+
 			let force_serializeValue = async (n,i) =>
 				{
-					if(!node.widgets[2].value) {
-						return node.widgets[1].value;
+					if(!mode_widget.value) {
+						return populated_text_widget.value;
 					}
 					else {
-				        let wildcard_text = await node.widgets[0].serializeValue();
+				        let wildcard_text = await wildcard_text_widget.serializeValue();
 
 						let response = await api.fetchApi(`/impact/wildcards`, {
 																method: 'POST',
 																headers: { 'Content-Type': 'application/json' },
-																body: JSON.stringify({text: wildcard_text})
+																body: JSON.stringify({text: wildcard_text, seed: seed_widget.value})
 															});
 
 						let populated = await response.json();
 
 						n.widgets_values[2] = false;
 						n.widgets_values[1] = populated.text;
-						populate_setter.call(node.widgets[1], populated.text);
+						populate_setter.call(populated_text_widget, populated.text);
 
 						return populated.text;
 					}
 				};
 
 			// mode combo
-			Object.defineProperty(node.widgets[2], "value", {
+			Object.defineProperty(mode_widget, "value", {
 				set: (value) => {
 						node._mode_value = value == true || value == "Populate";
-						node.widgets[1].inputEl.disabled = value == true || value == "Populate";
+						populated_text_widget.inputEl.disabled = value == true || value == "Populate";
 					},
 				get: () => {
 						if(node._mode_value != undefined)
@@ -456,18 +561,18 @@ app.registerExtension({
 			});
 
             // to avoid conflict with presetText.js of pythongosssss
-			Object.defineProperty(node.widgets[1], "value", {
+			Object.defineProperty(populated_text_widget, "value", {
 				set: (value) => {
 				        const stackTrace = new Error().stack;
                         if(!stackTrace.includes('serializeValue'))
-				            populate_setter.call(node.widgets[1], value);
+				            populate_setter.call(populated_text_widget, value);
 					},
 				get: () => {
-				        return populate_getter.call(node.widgets[1]);
+				        return populate_getter.call(populated_text_widget);
 					 }
 			});
 
-            node.widgets[0].serializeValue = (n,i) => {
+            wildcard_text_widget.serializeValue = (n,i) => {
                 if(node.inputs) {
 	                let link_id = node.inputs.find(x => x.name=="wildcard_text")?.link;
 	                if(link_id != undefined) {
@@ -478,14 +583,15 @@ app.registerExtension({
 	                    }
 	                }
 	                else {
-	                    return node.widgets[0].value;
+	                    return wildcard_text_widget.value;
 	                }
                 }
                 else {
-                    return node.widgets[0].value;
+                    return wildcard_text_widget.value;
                 }
             };
-            node.widgets[1].serializeValue = force_serializeValue;
+
+            populated_text_widget.serializeValue = force_serializeValue;
 		}
 
 		if (node.comfyClass == "PreviewBridge" || node.comfyClass == "MaskPainter") {

@@ -157,6 +157,7 @@ NODE_CLASS_MAPPINGS = {
     "Segs & Mask ForEach": SegsBitwiseAndMaskForEach,
     "EmptySegs": EmptySEGS,
 
+    "MediaPipeFaceMeshToSEGS": MediaPipeFaceMeshToSEGS,
     "MaskToSEGS": MaskToSEGS,
     "ToBinaryMask": ToBinaryMask,
     "MasksToMaskList": MasksToMaskList,
@@ -188,6 +189,7 @@ NODE_CLASS_MAPPINGS = {
     "LatentSwitch": GeneralSwitch,
     "SEGSSwitch": GeneralSwitch,
     "ImpactSwitch": GeneralSwitch,
+    "ImpactInversedSwitch": GeneralInversedSwitch,
 
     # "SaveConditioning": SaveConditioning,
     # "LoadConditioning": LoadConditioning,
@@ -249,6 +251,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BboxDetectorCombined_v2": "BBOX Detector (combined)",
     "SegmDetectorCombined_v2": "SEGM Detector (combined)",
     "SegsToCombinedMask": "SEGS to MASK (combined)",
+    "MediaPipeFaceMeshToSEGS": "MediaPipe FaceMesh to SEGS",
     "MaskToSEGS": "MASK to SEGS",
     "BitwiseAndMaskForEach": "Bitwise(SEGS & SEGS)",
     "SubtractMaskForEach": "Bitwise(SEGS - SEGS)",
@@ -296,6 +299,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageReceiver": "Image Receiver",
     "ImageMaskSwitch": "Switch (images, mask)",
     "ImpactSwitch": "Switch (Any)",
+    "ImpactInversedSwitch": "Inversed Switch (Any)",
 
     "MasksToMaskList": "Masks to Mask List",
     "ImpactImageBatchToImageList": "Image batch to Image List",
