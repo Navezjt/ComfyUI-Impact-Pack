@@ -1,4 +1,6 @@
 from impact.utils import any_typ
+import comfy_extras.nodes_mask
+from nodes import MAX_RESOLUTION
 
 class GeneralSwitch:
     @classmethod
@@ -9,10 +11,12 @@ class GeneralSwitch:
                     },
                 "optional": {
                     "input1": (any_typ,),
-                    }
+                    },
+                "hidden": {"unique_id": "UNIQUE_ID", "extra_pnginfo": "EXTRA_PNGINFO"}
                 }
 
-    RETURN_TYPES = (any_typ, )
+    RETURN_TYPES = (any_typ, "STRING", )
+    RETURN_NAMES = ("selected_value", "selected_label", )
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Util"
@@ -20,11 +24,24 @@ class GeneralSwitch:
     def doit(self, *args, **kwargs):
         input_name = f"input{int(kwargs['select'])}"
 
+        selected_label = input_name
+        node_id = kwargs['unique_id']
+        nodelist = kwargs['extra_pnginfo']['workflow']['nodes']
+        for node in nodelist:
+            if str(node['id']) == node_id:
+                inputs = node['inputs']
+
+                for slot in inputs:
+                    if slot['name'] == input_name and 'label' in slot:
+                        selected_label = slot['label']
+
+                break
+
         if input_name in kwargs:
-            return (kwargs[input_name],)
+            return (kwargs[input_name], selected_label)
         else:
             print(f"ImpactSwitch: invalid select index (ignored)")
-            return (None,)
+            return (None, "")
 
 
 class GeneralInversedSwitch:
@@ -104,7 +121,7 @@ class RemoveNoiseMask:
         res = {key: value for key, value in samples.items() if key != 'noise_mask'}
         return (res, )
 
-MAX_RESOLUTION=8192
+
 class ImagePasteMasked:
     @classmethod
     def INPUT_TYPES(s):
@@ -127,5 +144,57 @@ class ImagePasteMasked:
 
     def composite(self, destination, source, x, y, resize_source, mask = None):
         destination = destination.clone().movedim(-1, 1)
-        output = composite(destination, source.movedim(-1, 1), x, y, mask, 1, resize_source).movedim(1, -1)
+        output = comfy_extras.nodes_mask.composite(destination, source.movedim(-1, 1), x, y, mask, 1, resize_source).movedim(1, -1)
         return (output,)
+
+
+from impact.utils import any_typ
+
+class ImpactLogger:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "data": (any_typ, ""),
+                    },
+                "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
+                }
+
+    CATEGORY = "ImpactPack/Debug"
+
+    OUTPUT_NODE = True
+
+    RETURN_TYPES = ()
+    FUNCTION = "doit"
+
+    def doit(self, data, prompt, extra_pnginfo):
+        shape = ""
+        if hasattr(data, "shape"):
+            shape = f"{data.shape} / "
+
+        print(f"[IMPACT LOGGER]: {shape}{data}")
+
+        print(f"         PROMPT: {prompt}")
+
+        # for x in prompt:
+        #     if 'inputs' in x and 'populated_text' in x['inputs']:
+        #         print(f"PROMP: {x['10']['inputs']['populated_text']}")
+        #
+        # for x in extra_pnginfo['workflow']['nodes']:
+        #     if x['type'] == 'ImpactWildcardProcessor':
+        #         print(f" WV : {x['widgets_values'][1]}\n")
+
+        return {}
+
+
+class ImpactDummyInput:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {}}
+
+    CATEGORY = "ImpactPack/Debug"
+
+    RETURN_TYPES = (any_typ,)
+    FUNCTION = "doit"
+
+    def doit(self):
+        return ("DUMMY",)

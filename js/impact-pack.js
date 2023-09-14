@@ -204,14 +204,17 @@ app.registerExtension({
                 if(type == 2) {
                     // connect output
                     if(connected){
+                        if(app.graph._nodes_by_id[link_info.target_id].type == 'Reroute') {
+                            app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
+                        }
+
                         if(this.outputs[0].type == '*'){
                             if(link_info.type == '*') {
-                                this.disconnectOutput(link_info.origin_slot);
+                                app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
                             }
                             else {
                                 // propagate type
                                 this.outputs[0].type = link_info.type;
-                                this.outputs[0].label = link_info.type;
                                 this.outputs[0].name = link_info.type;
 
                                 for(let i in this.inputs) {
@@ -223,6 +226,9 @@ app.registerExtension({
                     }
                 }
                 else {
+                    if(app.graph._nodes_by_id[link_info.origin_id].type == 'Reroute')
+                        this.disconnectInput(link_info.target_slot);
+
                     // connect input
                     if(this.inputs[0].type == '*'){
                         const node = app.graph.getNodeById(link_info.origin_id);
@@ -239,7 +245,6 @@ app.registerExtension({
                         }
 
                         this.outputs[0].type = origin_type;
-                        this.outputs[0].label = origin_type;
                         this.outputs[0].name = origin_type;
                     }
 
@@ -260,7 +265,6 @@ app.registerExtension({
 
 				let slot_i = 1;
                 for (let i = 0; i < this.outputs.length; i++) {
-                    this.outputs[i].label = `output${slot_i}`
                     this.outputs[i].name = `output${slot_i}`
                     slot_i++;
                 }
@@ -308,9 +312,13 @@ app.registerExtension({
                 if(type == 2) {
                     // connect output
                     if(connected){
+                        if(nodeData.name == 'ImpactSwitch' && app.graph._nodes_by_id[link_info.target_id].type == 'Reroute') {
+                            app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
+                        }
+
                         if(this.outputs[0].type == '*'){
                             if(link_info.type == '*') {
-                                this.disconnectOutput(link_info.origin_slot);
+                                app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
                             }
                             else {
                                 // propagate type
@@ -330,6 +338,9 @@ app.registerExtension({
                     return;
                 }
                 else {
+                    if(nodeData.name == 'ImpactSwitch' && app.graph._nodes_by_id[link_info.origin_id].type == 'Reroute')
+                        this.disconnectInput(link_info.target_slot);
+
                     // connect input
                     if(this.inputs[index].name == 'select' || this.inputs[index].name == 'sel_mode')
                         return;
@@ -378,7 +389,6 @@ app.registerExtension({
                 for (let i = 0; i < this.inputs.length; i++) {
                     let input_i = this.inputs[i];
                     if(input_i.name != 'select'&& input_i.name != 'sel_mode') {
-	                    input_i.label = `${input_name}${slot_i}`
 	                    input_i.name = `${input_name}${slot_i}`
                         slot_i++;
                     }

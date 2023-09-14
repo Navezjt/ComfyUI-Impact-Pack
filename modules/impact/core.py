@@ -478,7 +478,7 @@ def convert_and_stack_masks(masks):
     mask_tensors = []
     for mask in masks:
         mask_array = np.array(mask, dtype=np.uint8)
-        mask_tensor = torch.from_numpy(mask_array).bool()
+        mask_tensor = torch.from_numpy(mask_array)
         mask_tensors.append(mask_tensor)
 
     stacked_masks = torch.stack(mask_tensors, dim=0)
@@ -666,8 +666,8 @@ class ONNXDetector:
 
                         # prepare cropped mask
                         cropped_mask = np.zeros((crop_y2 - crop_y1, crop_x2 - crop_x1))
-                        inner_mask = np.ones((y2 - y1, x2 - x1))
-                        cropped_mask[y1 - crop_y1:y2 - crop_y1, x1 - crop_x1:x2 - crop_x1] = inner_mask
+                        cropped_mask[y1 - crop_y1:y2 - crop_y1, x1 - crop_x1:x2 - crop_x1] = 1
+                        cropped_mask = dilate_mask(cropped_mask, dilation)
 
                         # make items
                         item = SEG(None, cropped_mask, scores[i], crop_region, item_bbox, None, None)

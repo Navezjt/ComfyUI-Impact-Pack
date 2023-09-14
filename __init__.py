@@ -96,6 +96,7 @@ from impact.detectors import *
 from impact.pipe import *
 from impact.logics import *
 from impact.util_nodes import *
+from impact.segs_nodes import *
 
 impact.wildcards.read_wildcard_dict(wildcards_path)
 impact.wildcards.read_wildcard_dict(custom_wildcards_path)
@@ -161,6 +162,7 @@ NODE_CLASS_MAPPINGS = {
     "MaskToSEGS": MaskToSEGS,
     "ToBinaryMask": ToBinaryMask,
     "MasksToMaskList": MasksToMaskList,
+    "MaskListToMaskBatch": MaskListToMaskBatch,
 
     "BboxDetectorSEGS": BboxDetectorForEach,
     "SegmDetectorSEGS": SegmDetectorForEach,
@@ -168,6 +170,14 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
+
+    "ImpactDecomposeSEGS": DecomposeSEGS,
+    "ImpactAssembleSEGS": AssembleSEGS,
+    "ImpactFrom_SEG_ELT": From_SEG_ELT,
+    "ImpactEdit_SEG_ELT": Edit_SEG_ELT,
+    "ImpactDilate_Mask_SEG_ELT": Dilate_SEG_ELT,
+    "ImpactDilateMask": DilateMask,
+    "ImpactScaleBy_BBOX_SEG_ELT": SEG_ELT_BBOX_ScaleBy,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
     "SegmDetectorCombined_v2": SegmDetectorCombined,
@@ -202,6 +212,7 @@ NODE_CLASS_MAPPINGS = {
     "SEGSPreview": SEGSPreview,
     "SEGSToImageList": SEGSToImageList,
     "ImpactSEGSToMaskList": SEGSToMaskList,
+    "ImpactSEGSToMaskBatch": SEGSToMaskBatch,
     "ImpactSEGSConcat": SEGSConcat,
 
     "ImpactKSamplerBasicPipe": KSamplerBasicPipe,
@@ -293,6 +304,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSEGSRangeFilter": "SEGS Filter (range)",
     "ImpactSEGSOrderedFilter": "SEGS Filter (ordered)",
     "ImpactSEGSConcat": "SEGS Concat",
+    "ImpactSEGSToMaskList": "SEGS to Mask List",
+    "ImpactSEGSToMaskBatch": "SEGS to Mask Batch",
+
+    "ImpactDecomposeSEGS": "Decompose (SEGS)",
+    "ImpactAssembleSEGS": "Assemble (SEGS)",
+    "ImpactFrom_SEG_ELT": "From SEG_ELT",
+    "ImpactEdit_SEG_ELT": "Edit SEG_ELT",
+    "ImpactDilate_Mask_SEG_ELT": "Dilate Mask (SEG_ELT)",
+    "ImpactScaleBy_BBOX_SEG_ELT": "ScaleBy BBOX (SEG_ELT)",
+    "ImpactDilateMask": "Dilate Mask",
 
     "PreviewBridge": "Preview Bridge",
     "ImageSender": "Image Sender",
@@ -302,6 +323,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactInversedSwitch": "Inversed Switch (Any)",
 
     "MasksToMaskList": "Masks to Mask List",
+    "MaskListToMaskBatch": "Mask List to Masks",
     "ImpactImageBatchToImageList": "Image batch to Image List",
     "ImpactMakeImageList": "Make Image List",
     "ImpactStringSelector": "String Selector",
