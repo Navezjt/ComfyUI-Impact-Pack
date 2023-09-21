@@ -187,7 +187,7 @@ app.registerExtension({
 	},
 
 	async beforeRegisterNodeDef(nodeType, nodeData, app) {
-		if (nodeData.name == "IterativeLatentUpscale" || nodeData.name == "IterativeImageUpscale") {
+		if (nodeData.name == "IterativeLatentUpscale" || nodeData.name == "IterativeImageUpscale" || nodeData.name == "RegionalSampler") {
 			impactProgressBadge.addStatusHandler(nodeType);
 		}
 
@@ -284,12 +284,16 @@ app.registerExtension({
             }
         }
 
-        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
+        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'CombineRegionalPrompts' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
             var input_name = "input";
 
             switch(nodeData.name) {
             case 'ImpactMakeImageList':
                 input_name = "image";
+                break;
+
+            case 'CombineRegionalPrompts':
+                input_name = "regional_prompts";
                 break;
 
             case 'LatentSwitch':
@@ -635,16 +639,28 @@ app.registerExtension({
 								forward_type: app.nodeOutputs[id]['aux'][1][0]['type']
 							};
 
-						app.nodeOutputs[id].images = [{
-								...node._images[0],
-								...item
-							}];
+						if(node._images) {
+							app.nodeOutputs[id].images = [{
+									...node._images[0],
+									...item
+								}];
 
-						node.widgets[0].value =
-							{
-								...node._images[0],
-								...item
-							};
+							node.widgets[0].value =
+								{
+									...node._images[0],
+									...item
+								};
+						}
+						else {
+							app.nodeOutputs[id].images = [{
+									...item
+								}];
+
+							node.widgets[0].value =
+								{
+									...item
+								};
+						}
 
 						if(need_invalidate) {
 							Promise.all(
