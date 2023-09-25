@@ -511,7 +511,7 @@ class From_SEG_ELT:
                 }
 
     RETURN_TYPES = ("SEG_ELT", "IMAGE", "MASK", "SEG_ELT_crop_region", "SEG_ELT_bbox", "SEG_ELT_control_net_wrapper", "FLOAT", "STRING")
-    RETURN_NAMES = ("seg_lt", "cropped_image", "cropped_mask", "crop_region", "bbox", "control_net_wrapper", "confidence", "label")
+    RETURN_NAMES = ("seg_elt", "cropped_image", "cropped_mask", "crop_region", "bbox", "control_net_wrapper", "confidence", "label")
 
     FUNCTION = "doit"
 
@@ -519,7 +519,7 @@ class From_SEG_ELT:
 
     def doit(self, seg_elt):
         cropped_image = torch.tensor(seg_elt.cropped_image) if seg_elt.cropped_image is not None else None
-        return (seg_elt, cropped_image, torch.tensor(seg_elt.cropped_mask), seg_elt.confidence, seg_elt.crop_region, seg_elt.bbox, seg_elt.label, seg_elt.control_net_wrapper)
+        return (seg_elt, cropped_image, torch.tensor(seg_elt.cropped_mask), seg_elt.crop_region, seg_elt.bbox, seg_elt.control_net_wrapper, seg_elt.confidence, seg_elt.label,)
 
 
 class Edit_SEG_ELT:
