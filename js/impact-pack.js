@@ -285,11 +285,14 @@ app.registerExtension({
             }
         }
 
-        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'CombineRegionalPrompts' || nodeData.name === 'ImpactSwitch' || nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
+        if (nodeData.name === 'ImpactMakeImageList' || nodeData.name === 'ImpactMakeImageBatch' ||
+            nodeData.name === 'CombineRegionalPrompts' || nodeData.name === 'ImpactSwitch' ||
+            nodeData.name === 'LatentSwitch' || nodeData.name == 'SEGSSwitch') {
             var input_name = "input";
 
             switch(nodeData.name) {
             case 'ImpactMakeImageList':
+            case 'ImpactMakeImageBatch':
                 input_name = "image";
                 break;
 
@@ -316,7 +319,7 @@ app.registerExtension({
 
                 if(type == 2) {
                     // connect output
-                    if(connected){
+                    if(connected && index == 0){
                         if(nodeData.name == 'ImpactSwitch' && app.graph._nodes_by_id[link_info.target_id].type == 'Reroute') {
                             app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
                         }

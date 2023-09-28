@@ -1,6 +1,8 @@
 import os
 import sys
 
+import torch
+
 import folder_paths
 import comfy
 from nodes import MAX_RESOLUTION
@@ -428,7 +430,7 @@ class SEGSToMaskBatch:
                      },
                 }
 
-    RETURN_TYPES = ("MASKS",)
+    RETURN_TYPES = ("MASK",)
     OUTPUT_IS_LIST = (True,)
     FUNCTION = "doit"
 
@@ -557,7 +559,14 @@ class Edit_SEG_ELT:
         control_net_wrapper = seg_elt.control_net_wrapper if control_net_wrapper_opt is None else control_net_wrapper_opt
 
         cropped_image = cropped_image.numpy() if cropped_image is not None else None
-        seg = SEG(cropped_image, cropped_mask.numpy(), confidence, crop_region, bbox, label, control_net_wrapper)
+
+        if isinstance(cropped_mask, torch.Tensor):
+            if len(cropped_mask.shape) == 3:
+                cropped_mask = cropped_mask.squeeze(0)
+
+            cropped_mask = cropped_mask.numpy()
+
+        seg = SEG(cropped_image, cropped_mask, confidence, crop_region, bbox, label, control_net_wrapper)
 
         return (seg,)
 
@@ -685,7 +694,7 @@ class MediaPipeFaceMeshToSEGS:
         bool_false_widget = ("BOOLEAN", {"default": False, "label_on": "Enabled", "label_off": "Disabled"})
         return {"required": {
                                 "image": ("IMAGE",),
-                                "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10, "step": 0.1}),
+                                "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 100, "step": 0.1}),
                                 "bbox_fill": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
                                 "crop_min_size": ("INT", {"min": 10, "max": MAX_RESOLUTION, "step": 1, "default": 50}),
                                 "drop_size": ("INT", {"min": 1, "max": MAX_RESOLUTION, "step": 1, "default": 1}),
@@ -749,7 +758,7 @@ class MaskToSEGS:
         return {"required": {
                                 "mask": ("MASK",),
                                 "combined": ("BOOLEAN", {"default": False, "label_on": "True", "label_off": "False"}),
-                                "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10, "step": 0.1}),
+                                "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 100, "step": 0.1}),
                                 "bbox_fill": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
                                 "drop_size": ("INT", {"min": 1, "max": MAX_RESOLUTION, "step": 1, "default": 10}),
                              }
@@ -761,6 +770,9 @@ class MaskToSEGS:
     CATEGORY = "ImpactPack/Operation"
 
     def doit(self, mask, combined, crop_factor, bbox_fill, drop_size):
+        if len(mask.shape) == 3:
+            mask = mask.squeeze(0)
+
         result = core.mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size)
         return (result, )
 

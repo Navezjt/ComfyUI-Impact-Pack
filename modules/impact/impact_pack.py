@@ -44,7 +44,7 @@ class ONNXDetectorProvider:
     def INPUT_TYPES(s):
         return {"required": {"model_name": (folder_paths.get_filename_list("onnx"), )}}
 
-    RETURN_TYPES = ("ONNX_DETECTOR", )
+    RETURN_TYPES = ("BBOX_DETECTOR", )
     FUNCTION = "load_onnx"
 
     CATEGORY = "ImpactPack"
@@ -123,7 +123,7 @@ class ONNXDetectorForEach:
                     "image": ("IMAGE",),
                     "threshold": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01}),
                     "dilation": ("INT", {"default": 10, "min": -512, "max": 512, "step": 1}),
-                    "crop_factor": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 10, "step": 0.1}),
+                    "crop_factor": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 100, "step": 0.1}),
                     "drop_size": ("INT", {"min": 1, "max": MAX_RESOLUTION, "step": 1, "default": 10}),
                     }
                 }
@@ -813,6 +813,10 @@ class TwoSamplersForMaskUpscalerProviderPipe:
     def doit(self, scale_method, full_sample_schedule, use_tiled_vae, base_sampler, mask_sampler, mask, basic_pipe,
              full_sampler_opt=None, upscale_model_opt=None,
              pk_hook_base_opt=None, pk_hook_mask_opt=None, pk_hook_full_opt=None, tile_size=512):
+
+        if len(mask.shape) == 3:
+            mask = mask.squeeze(0)
+
         _, _, vae, _, _ = basic_pipe
         upscaler = core.TwoSamplersForMaskUpscaler(scale_method, full_sample_schedule, use_tiled_vae,
                                                    base_sampler, mask_sampler, mask, vae, full_sampler_opt, upscale_model_opt,
@@ -935,11 +939,11 @@ class FaceDetailerPipe:
                      "force_inpaint": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
 
                      "bbox_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-                     "bbox_dilation": ("INT", {"default": 10, "min": 0, "max": 255, "step": 1}),
+                     "bbox_dilation": ("INT", {"default": 10, "min": -512, "max": 512, "step": 1}),
                      "bbox_crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10, "step": 0.1}),
 
                      "sam_detection_hint": (["center-1", "horizontal-2", "vertical-2", "rect-4", "diamond-4", "mask-area", "mask-points", "mask-point-bbox", "none"],),
-                     "sam_dilation": ("INT", {"default": 0, "min": 0, "max": 255, "step": 1}),
+                     "sam_dilation": ("INT", {"default": 0, "min": -512, "max": 512, "step": 1}),
                      "sam_threshold": ("FLOAT", {"default": 0.93, "min": 0.0, "max": 1.0, "step": 0.01}),
                      "sam_bbox_expansion": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1}),
                      "sam_mask_hint_threshold": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -1085,7 +1089,7 @@ class SegsBitwiseAndMaskForEach:
     def INPUT_TYPES(s):
         return {"required": {
                         "segs": ("SEGS",),
-                        "masks": ("MASKS",),
+                        "masks": ("MASK",),
                     }
                 }
 
@@ -1211,7 +1215,7 @@ class MasksToMaskList:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                        "masks": ("MASKS", ),
+                        "masks": ("MASK", ),
                       }
                 }
 
@@ -1246,14 +1250,58 @@ class MaskListToMaskBatch:
 
     INPUT_IS_LIST = True
 
-    RETURN_TYPES = ("MASKS", )
+    RETURN_TYPES = ("MASK", )
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Operation"
 
     def doit(self, mask):
-        mask_batch = torch.stack(mask, dim=0)
-        return (mask_batch, )
+        if len(mask) == 1:
+            if len(mask[0].shape) == 2:
+                mask = mask[0].unsqueeze(0)
+            return (mask,)
+        elif len(mask) > 1:
+            mask1 = mask[0]
+            if len(mask1.shape) == 2:
+                mask1 = mask1.unsqueeze(0)
+
+            for mask2 in mask[1:]:
+                if len(mask2.shape) == 2:
+                    mask2 = mask2.unsqueeze(0)
+                if mask1.shape[1:] != mask2.shape[1:]:
+                    mask2 = comfy.utils.common_upscale(mask2.movedim(-1, 1), mask1.shape[2], mask1.shape[1], "bilinear", "center").movedim(1, -1)
+                mask1 = torch.cat((mask1, mask2), dim=0)
+            return (mask1,)
+        else:
+            empty_mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu").unsqueeze(0)
+            return (empty_mask,)
+
+
+class ImageListToMaskBatch:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                        "images": ("IMAGE", ),
+                      }
+                }
+
+    INPUT_IS_LIST = True
+
+    RETURN_TYPES = ("IMAGE", )
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Operation"
+
+    def doit(self, images):
+        if len(images) <= 1:
+            return (images,)
+        else:
+            image1 = images[0]
+            for image2 in images[1:]:
+                if image1.shape[1:] != image2.shape[1:]:
+                    image2 = comfy.utils.common_upscale(image2.movedim(-1, 1), image1.shape[2], image1.shape[1], "bilinear", "center").movedim(1, -1)
+                image1 = torch.cat((image1, image2), dim=0)
+            return (image1,)
 
 
 class ToBinaryMask:
@@ -1980,6 +2028,31 @@ class MakeImageList:
             images.append(v)
 
         return (images, )
+
+
+class MakeImageBatch:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {"image1": ("IMAGE",), }}
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    def doit(self, **kwargs):
+        image1 = kwargs['image1']
+        del kwargs['image1']
+        images = [value for value in kwargs.values()]
+
+        if len(images) == 0:
+            return (image1,)
+        else:
+            for image2 in images:
+                if image1.shape[1:] != image2.shape[1:]:
+                    image2 = comfy.utils.common_upscale(image2.movedim(-1, 1), image1.shape[2], image1.shape[1], "bilinear", "center").movedim(1, -1)
+                image1 = torch.cat((image1, image2), dim=0)
+            return (image1,)
 
 
 class StringSelector:

@@ -163,10 +163,11 @@ NODE_CLASS_MAPPINGS = {
     "ToBinaryMask": ToBinaryMask,
     "MasksToMaskList": MasksToMaskList,
     "MaskListToMaskBatch": MaskListToMaskBatch,
+    "ImageListToImageBatch": ImageListToMaskBatch,
 
     "BboxDetectorSEGS": BboxDetectorForEach,
     "SegmDetectorSEGS": SegmDetectorForEach,
-    "ONNXDetectorSEGS": ONNXDetectorForEach,
+    "ONNXDetectorSEGS": BboxDetectorForEach,
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
@@ -223,6 +224,7 @@ NODE_CLASS_MAPPINGS = {
 
     "ImpactImageBatchToImageList": ImageBatchToImageList,
     "ImpactMakeImageList": MakeImageList,
+    "ImpactMakeImageBatch": MakeImageBatch,
 
     "RegionalSampler": RegionalSampler,
     "RegionalSamplerAdvanced": RegionalSamplerAdvanced,
@@ -255,7 +257,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "BboxDetectorSEGS": "BBOX Detector (SEGS)",
     "SegmDetectorSEGS": "SEGM Detector (SEGS)",
-    "ONNXDetectorSEGS": "ONNX Detector (SEGS)",
+    "ONNXDetectorSEGS": "ONNX Detector (SEGS/legacy) - use BBOXDetector",
     "ImpactSimpleDetectorSEGS": "Simple Detector (SEGS)",
     "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
     "ImpactControlNetApplySEGS": "ControlNetApply (SEGS)",
@@ -327,6 +329,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskListToMaskBatch": "Mask List to Masks",
     "ImpactImageBatchToImageList": "Image batch to Image List",
     "ImpactMakeImageList": "Make Image List",
+    "ImpactMakeImageBatch": "Make Image Batch",
     "ImpactStringSelector": "String Selector",
 
     "RemoveNoiseMask": "Remove Noise Mask",

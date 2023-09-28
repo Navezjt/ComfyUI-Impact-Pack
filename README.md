@@ -7,6 +7,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 
 
 ## NOTICE
+* V4.12: `MASKS` is changed to `MASK`.
 * V4.7.2 isn't compatible with old version of `ControlNet Auxiliary Preprocessor`. If you will use `MediaPipe FaceMesh to SEGS` update to latest version(Sep. 17th).  
 * Selection weight syntax is changed(: -> ::) since V3.16. ([tutorial](https://github.com/ltdrdata/ComfyUI-extension-tutorials/blob/Main/ComfyUI-Impact-Pack/tutorial/ImpactWildcardProcessor.md))
 * Starting from V3.6, requires latest version(Aug 8, 9ccc965) of ComfyUI.
@@ -25,7 +26,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 * UltralyticsDetectorProvider - Loads the Ultralystics model to provide SEGM_DETECTOR, BBOX_DETECTOR.
   - Unlike `MMDetDetectorProvider`, for segm models, `BBOX_DETECTOR` is also provided.
   - The various models available in UltralyticsDetectorProvider can be downloaded through **ComfyUI-Manager**.
-* ONNXDetectorProvider - Loads the ONNX model to provide SEGM_DETECTOR.
+* ONNXDetectorProvider - Loads the ONNX model to provide BBOX_DETECTOR.
 * CLIPSegDetectorProvider - Wrapper for CLIPSeg to provide BBOX_DETECTOR.
   * You need to install the ComfyUI-CLIPSeg node extension.
 * SEGM Detector (combined) - Detects segmentation and returns a mask from the input image.
@@ -48,7 +49,6 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 * Bitwise(MASK + MASK) - Combine two masks.
 * SEGM Detector (SEGS) - Detects segmentation and returns SEGS from the input image.
 * BBOX Detector (SEGS) - Detects bounding boxes and returns SEGS from the input image.
-* ONNX Detector (SEGS) - Utilizes the ONNX model to identify the bbox and retrieve the SEGS from the input image.
 * Detailer (SEGS) - Refines the image based on SEGS.
 * DetailerDebug (SEGS) - Refines the image based on SEGS. Additionally, it provides the ability to monitor the cropped image and the refined image of the cropped image.
   * To prevent regeneration caused by the seed that does not change every time when using 'external_seed', please disable the 'seed random generate' option in the 'Detailer...' node.
@@ -163,6 +163,7 @@ This takes latent as input and outputs latent as the result.
 * Image batch To Image List - Convert Image batch to Image List
 - You can use images generated in a multi batch to handle them
 * Make Image List - Convert multiple images into a single image list
+* Make Image Batch - Convert multiple images into a single image batch
 - The input of images can be scaled up as needed
 
 * String Selector - It selects and returns a portion of the string. When `multiline` mode is disabled, it simply returns the string of the line pointed to by the selector. When `multiline` mode is enabled, it divides the string based on lines that start with `#` and returns them. If the `select` value is larger than the number of items, it will start counting from the first line again and return accordingly.
@@ -178,6 +179,7 @@ This takes latent as input and outputs latent as the result.
 
 ## Deprecated
 * The following nodes have been kept only for compatibility with existing workflows, and are no longer supported. Please replace them with new nodes.
+   * ONNX Detector (SEGS) - BBOX Detector (SEGS)
    * MMDetLoader -> MMDetDetectorProvider
    * SegsMaskCombine -> SEGS to MASK (combined)
    * BboxDetectorForEach -> BBOX Detector (SEGS)
