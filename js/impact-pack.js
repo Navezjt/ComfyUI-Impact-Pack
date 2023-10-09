@@ -320,7 +320,7 @@ app.registerExtension({
                 if(type == 2) {
                     // connect output
                     if(connected && index == 0){
-                        if(nodeData.name == 'ImpactSwitch' && app.graph._nodes_by_id[link_info.target_id].type == 'Reroute') {
+                        if(nodeData.name == 'ImpactSwitch' && app.graph._nodes_by_id[link_info.target_id]?.type == 'Reroute') {
                             app.graph._nodes_by_id[link_info.target_id].disconnectInput(link_info.target_slot);
                         }
 
@@ -477,6 +477,7 @@ app.registerExtension({
 		if(node.comfyClass == "ImpactWildcardEncode" || node.comfyClass == "ToDetailerPipe" || node.comfyClass == "ToDetailerPipeSDXL"
 		|| node.comfyClass == "EditDetailerPipe" || node.comfyClass == "BasicPipeToDetailerPipe" || node.comfyClass == "BasicPipeToDetailerPipeSDXL") {
 			node._value = "Select the LoRA to add to the text";
+			node._wvalue = "Select the Wildcard to add to the text";
 
             var tbox_id = 0;
             var combo_id = 3;
@@ -490,12 +491,33 @@ app.registerExtension({
                 case "ToDetailerPipe":
 		        case "ToDetailerPipeSDXL":
                 case "EditDetailerPipe":
+                case "EditDetailerPipeSDXL":
                 case "BasicPipeToDetailerPipe":
 		        case "BasicPipeToDetailerPipeSDXL":
                     tbox_id = 0;
                     combo_id = 1;
                     break;
             }
+
+			Object.defineProperty(node.widgets[combo_id+1], "value", {
+				set: (value) => {
+				        const stackTrace = new Error().stack;
+                        if(stackTrace.includes('inner_value_change')) {
+                            if(value != "Select the Wildcard to add to the text") {
+                                if(node.widgets[tbox_id].value != '')
+                                    node.widgets[tbox_id].value += ', '
+
+
+	                            node.widgets[tbox_id].value += value;
+                            }
+                        }
+
+						node._wvalue = value;
+					},
+				get: () => {
+                        return node._wvalue;
+					 }
+			});
 
 			Object.defineProperty(node.widgets[combo_id], "value", {
 				set: (value) => {
@@ -520,6 +542,7 @@ app.registerExtension({
                         return node._value;
 					 }
 			});
+
 
 			// Preventing validation errors from occurring in any situation.
 			node.widgets[combo_id].serializeValue = () => { return "Select the LoRA to add to the text"; }

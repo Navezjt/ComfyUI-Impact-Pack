@@ -7,6 +7,10 @@ import folder_paths
 wildcard_dict = {}
 
 
+def get_wildcard_list():
+    return [f"__{x}__" for x in wildcard_dict.keys()]
+
+
 def read_wildcard_dict(wildcard_path):
     global wildcard_dict
     for root, directories, files in os.walk(wildcard_path, followlinks=True):
@@ -16,9 +20,14 @@ def read_wildcard_dict(wildcard_path):
                 rel_path = os.path.relpath(file_path, wildcard_path)
                 key = os.path.splitext(rel_path)[0].replace('\\', '/').lower()
 
-                with open(file_path, 'r', encoding="UTF-8") as f:
-                    lines = f.read().splitlines()
-                    wildcard_dict[key] = lines
+                try:
+                    with open(file_path, 'r', encoding="ISO-8859-1") as f:
+                        lines = f.read().splitlines()
+                        wildcard_dict[key] = lines
+                except UnicodeDecodeError:
+                    with open(file_path, 'r', encoding="UTF-8", errors="ignore") as f:
+                        lines = f.read().splitlines()
+                        wildcard_dict[key] = lines
 
     return wildcard_dict
 
@@ -178,7 +187,21 @@ def remove_lora_tags(string):
     return result
 
 
+def resolve_lora_name(lora_name_cache, name):
+    if os.path.exists(name):
+        return name
+    else:
+        if len(lora_name_cache) == 0:
+            lora_name_cache.extend(folder_paths.get_filename_list("loras"))
+
+        for x in lora_name_cache:
+            if x.endswith(name):
+                return x
+
+
 def process_with_loras(wildcard_opt, model, clip):
+    lora_name_cache = []
+
     pass1 = process(wildcard_opt)
     loras = extract_lora_values(pass1)
     pass2 = remove_lora_tags(pass1)
@@ -186,6 +209,8 @@ def process_with_loras(wildcard_opt, model, clip):
     for lora_name, model_weight, clip_weight, lbw, lbw_a, lbw_b in loras:
         if (lora_name.split('.')[-1]) not in folder_paths.supported_pt_extensions:
             lora_name = lora_name+".safetensors"
+
+        lora_name = resolve_lora_name(lora_name_cache, lora_name)
 
         path = folder_paths.get_full_path("loras", lora_name)
 
