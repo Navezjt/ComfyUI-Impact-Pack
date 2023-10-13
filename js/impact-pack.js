@@ -110,9 +110,11 @@ function imgSendHandler(event) {
 						nodes[i].widgets[0].value = `${data.filename} [${data.type}]`;
 
 					let img = new Image();
+					img.onload = (event) => {
+						nodes[i].imgs = [img];
+						nodes[i].size[1] = Math.max(200, nodes[i].size[1]);
+					};
 					img.src = `/view?filename=${data.filename}&type=${data.type}&subfolder=${data.subfolder}`+app.getPreviewFormatParam();
-					nodes[i].imgs = [img];
-					nodes[i].size[1] = Math.max(200, nodes[i].size[1]);
 				}
 			}
 		}
@@ -546,6 +548,7 @@ app.registerExtension({
 
 			// Preventing validation errors from occurring in any situation.
 			node.widgets[combo_id].serializeValue = () => { return "Select the LoRA to add to the text"; }
+			node.widgets[combo_id+1].serializeValue = () => { return "Select the Wildcard to add to the text"; }
 		}
 
 		if(node.comfyClass == "ImpactWildcardProcessor" || node.comfyClass == "ImpactWildcardEncode") {
@@ -635,7 +638,7 @@ app.registerExtension({
             populated_text_widget.serializeValue = force_serializeValue;
 		}
 
-		if (node.comfyClass == "PreviewBridge" || node.comfyClass == "MaskPainter") {
+		if (node.comfyClass == "MaskPainter") {
 			node.widgets[0].value = '#placeholder';
 
 			Object.defineProperty(node, "images", {
