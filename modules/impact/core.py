@@ -1,3 +1,4 @@
+import copy
 import os
 from segment_anything import SamPredictor
 import torch.nn.functional as F
@@ -235,6 +236,9 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
             new_w = w
             new_h = h
 
+    if detailer_hook is not None:
+        new_w, new_h = detailer_hook.touch_scaled_size(new_w, new_h)
+
     print(f"Detailer: segment upscale for ({bbox_w, bbox_h}) | crop region {w, h} x {upscale} -> {new_w, new_h}")
 
     # upscale
@@ -264,6 +268,9 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     refined_latent = ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
                                       latent_image, denoise,
                                       refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
+
+    if detailer_hook is not None:
+        refined_latent = detailer_hook.pre_decode(refined_latent)
 
     # non-latent downscale - latent downscale cause bad quality
     refined_image = vae.decode(refined_latent['samples'])
@@ -716,7 +723,7 @@ class ONNXDetector:
     def __init__(self, onnx_model):
         self.onnx_model = onnx_model
 
-    def detect(self, image, threshold, dilation, crop_factor, drop_size=1):
+    def detect(self, image, threshold, dilation, crop_factor, drop_size=1, detailer_hook=None):
         drop_size = max(drop_size, 1)
         try:
             import impact.onnx as onnx
@@ -736,6 +743,10 @@ class ONNXDetector:
 
                     if x2 - x1 > drop_size and y2 - y1 > drop_size:  # minimum dimension must be (2,2) to avoid squeeze issue
                         crop_region = make_crop_region(w, h, item_bbox, crop_factor)
+
+                        if detailer_hook is not None:
+                            crop_region = item_bbox.post_crop_region(w, h, item_bbox, crop_region)
+
                         crop_x1, crop_y1, crop_x2, crop_y2, = crop_region
 
                         # prepare cropped mask
@@ -760,7 +771,7 @@ class ONNXDetector:
         pass
 
 
-def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1, label='A', crop_min_size=None):
+def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1, label='A', crop_min_size=None, detailer_hook=None):
     drop_size = max(drop_size, 1)
     if mask is None:
         print("[mask_to_segs] Cannot operate: MASK is empty.")
@@ -802,6 +813,10 @@ def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1, label='A',
                     mask_i.shape[1], mask_i.shape[0], bbox, crop_factor
                 )
                 x1, y1, x2, y2 = crop_region
+
+                if detailer_hook is not None:
+                    crop_region = detailer_hook.post_crop_region(mask_i.shape[1], mask_i.shape[0], bbox, crop_region)
+
                 if x2 - x1 > 0 and y2 - y1 > 0:
                     cropped_mask = mask_i[y1:y2, x1:x2]
 
@@ -822,6 +837,9 @@ def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1, label='A',
                 crop_region = make_crop_region(
                     mask_i.shape[1], mask_i.shape[0], bbox, crop_factor, crop_min_size
                 )
+
+                if detailer_hook is not None:
+                    crop_region = detailer_hook.post_crop_region(mask_i.shape[1], mask_i.shape[0], bbox, crop_region)
 
                 if w > drop_size and h > drop_size:
                     cropped_mask = np.array(
@@ -1070,9 +1088,18 @@ class PixelKSampleHook:
     def post_encode(self, samples):
         return samples
 
+    def pre_decode(self, samples):
+        return samples
+
     def pre_ksample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, upscaled_latent,
                     denoise):
         return model, seed, steps, cfg, sampler_name, scheduler, positive, negative, upscaled_latent, denoise
+
+    def post_crop_region(self, w, h, item_bbox, crop_region):
+        return crop_region
+
+    def touch_scaled_size(self, w, h):
+        return w, h
 
 
 class PixelKSampleHookCombine(PixelKSampleHook):
@@ -1466,6 +1493,69 @@ class ControlNetWrapper:
         return nodes.ControlNetApply().apply_controlnet(conditioning, self.control_net, image, self.strength)[0], image
 
 
+class CoreMLHook(PixelKSampleHook):
+    def __init__(self, mode):
+        super().__init__()
+        self.is_neural_engine_mode = mode
+        self.override_bbox_by_segm = False
+
+    def pre_decode(self, samples):
+        new_samples = copy.deepcopy(samples)
+        new_samples['samples'] = samples['samples'][0].unsqueeze(0)
+        return new_samples
+
+    def post_encode(self, samples):
+        new_samples = copy.deepcopy(samples)
+        new_samples['samples'] = samples['samples'].repeat(2, 1, 1, 1)
+        return new_samples
+
+    def post_crop_region(self, w, h, item_bbox, crop_region):
+        x1, y1, x2, y2 = crop_region
+        bx1, by1, bx2, by2 = item_bbox
+        crop_w = x2-x1
+        crop_h = y2-y1
+
+        if crop_w < crop_h:
+            # shrink height
+            top_gap = by1 - y1
+            bottom_gap = y2 - by2
+
+            if top_gap > bottom_gap:
+                ratio = bottom_gap / top_gap
+                delta = (crop_h - crop_w) * (1.0 - ratio)
+            else:
+                ratio = top_gap / bottom_gap
+                delta = (crop_h - crop_w) * ratio
+
+            new_y1 = int(y1 + delta)
+            new_y2 = int(new_y1 + crop_w)
+            crop_region = x1, new_y1, x2, new_y2
+
+        elif crop_w > crop_h:
+            # shrink width
+            left_gap = bx1 - x1
+            right_gap = x2 - bx2
+
+            if left_gap > right_gap:
+                ratio = right_gap / left_gap
+                delta = (crop_w - crop_h) * (1.0 - ratio)
+            else:
+                ratio = left_gap / right_gap
+                delta = (crop_w - crop_h) * ratio
+
+            new_x1 = int(x1 + delta)
+            new_x2 = int(new_x1 + crop_h)
+            crop_region = new_x1, y1, new_x2, y2
+
+        return crop_region
+
+    def touch_scaled_size(self, w, h):
+        if self.is_neural_engine_mode:
+            return 512, 512
+        else:
+            return 768, 768
+
+
 # REQUIREMENTS: BlenderNeko/ComfyUI Noise
 class InjectNoiseHook(PixelKSampleHook):
     def __init__(self, source, seed, start_strength, end_strength):
@@ -1620,13 +1710,13 @@ class BBoxDetectorBasedOnCLIPSeg:
         self.threshold = threshold
         self.dilation_factor = dilation_factor
 
-    def detect(self, image, bbox_threshold, bbox_dilation, bbox_crop_factor, drop_size=1):
+    def detect(self, image, bbox_threshold, bbox_dilation, bbox_crop_factor, drop_size=1, detailer_hook=None):
         mask = self.detect_combined(image, bbox_threshold, bbox_dilation)
 
         if len(mask.shape) == 3:
             mask = mask.squeeze(0)
 
-        segs = mask_to_segs(mask, False, bbox_crop_factor, True, drop_size)
+        segs = mask_to_segs(mask, False, bbox_crop_factor, True, drop_size, detailer_hook=detailer_hook)
         return segs
 
     def detect_combined(self, image, bbox_threshold, bbox_dilation):

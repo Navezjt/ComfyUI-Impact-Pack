@@ -110,6 +110,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
   * The source determines the types of CPU noise and GPU noise to be configured.
   * Currently, there is only a simple schedule available, where the strength of the noise varies from start_strength to end_strength during the progression of each iteration.
 * NoiseInjectionDetailerHookProvider - The `detailer_hook` is a hook in the `Detailer` that injects noise during the processing of each SEGS.
+* CoreMLDetailerHookProvider - CoreML supports only 512x512 size sampling. CoreMLDetailerHookProvider precisely fixes the upscale of the crop_region to this size. When using this hook, it will always be 512x512, regardless of the guide_size. However, if the guide_size is too small, skipping will occur.
 
 * Iterative Upscale (Latent) - The upscaler takes the input upscaler and splits the scale_factor into steps, then iteratively performs upscaling. 
 This takes latent as input and outputs latent as the result.
@@ -208,6 +209,10 @@ This takes latent as input and outputs latent as the result.
    * MaskPainter -> PreviewBridge
 * To use the existing deprecated legacy nodes, you need to enable the MMDet usage configuration.
 
+
+## Ultralytics models
+* huggingface.co/Bingsu/[adetailer](https://github.com/ultralytics/assets/releases/) - You can download face, people detection models, and clothing detection models.
+* ultralytics/[assets](https://github.com/ultralytics/assets/releases/) - You can download various types of detection models other than faces or people.
 
 ## How to activate 'MMDet usage'
 * Upon the initial execution, an `impact-pack.ini` file will be generated in the custom_nodes/ComfyUI-Impact-Pack directory.
