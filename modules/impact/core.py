@@ -49,19 +49,19 @@ def erosion_mask(mask, grow_mask_by):
     w = mask.shape[1]
     h = mask.shape[0]
 
-    mask = mask.clone()
-
+    device = comfy.model_management.get_torch_device()
+    mask = mask.clone().to(device)
     mask2 = torch.nn.functional.interpolate(mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1])), size=(w, h),
-                                            mode="bilinear")
+                                            mode="bilinear").to(device)
     if grow_mask_by == 0:
         mask_erosion = mask2
     else:
-        kernel_tensor = torch.ones((1, 1, grow_mask_by, grow_mask_by))
+        kernel_tensor = torch.ones((1, 1, grow_mask_by, grow_mask_by)).to(device)
         padding = math.ceil((grow_mask_by - 1) / 2)
 
         mask_erosion = torch.clamp(torch.nn.functional.conv2d(mask2.round(), kernel_tensor, padding=padding), 0, 1)
 
-    return mask_erosion[:, :, :w, :h].round()
+    return mask_erosion[:, :, :w, :h].round().cpu()
 
 
 def ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise,
@@ -115,6 +115,7 @@ class REGIONAL_PROMPT:
     def get_mask_erosion(self, factor):
         if self.mask_erosion is None or self.erosion_factor != factor:
             self.mask_erosion = erosion_mask(self.mask, factor)
+            self.erosion_factor = factor
 
         return self.mask_erosion
 
@@ -284,6 +285,114 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     # don't convert to latent - latent break image
     # preserving pil is much better
     return refined_image, cnet_pil
+
+
+def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, guide_size_for_bbox, max_size, bbox, seed, steps, cfg,
+                                   sampler_name,
+                                   scheduler, positive, negative, denoise, noise_mask, wildcard_opt=None,
+                                   detailer_hook=None,
+                                   refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
+                                   refiner_negative=None):
+    if noise_mask is not None and len(noise_mask.shape) == 3:
+        noise_mask = noise_mask.squeeze(0)
+
+    if wildcard_opt is not None and wildcard_opt != "":
+        model, _, positive = wildcards.process_with_loras(wildcard_opt, model, clip)
+
+    h = image_frames.shape[1]
+    w = image_frames.shape[2]
+
+    bbox_h = bbox[3] - bbox[1]
+    bbox_w = bbox[2] - bbox[0]
+
+    # Skip processing if the detected bbox is already larger than the guide_size
+    if guide_size_for_bbox:  # == "bbox"
+        # Scale up based on the smaller dimension between width and height.
+        upscale = guide_size / min(bbox_w, bbox_h)
+    else:
+        # for cropped_size
+        upscale = guide_size / min(w, h)
+
+    new_w = int(w * upscale)
+    new_h = int(h * upscale)
+
+    # safeguard
+    if 'aitemplate_keep_loaded' in model.model_options:
+        max_size = min(4096, max_size)
+
+    if new_w > max_size or new_h > max_size:
+        upscale *= max_size / max(new_w, new_h)
+        new_w = int(w * upscale)
+        new_h = int(h * upscale)
+
+    if upscale <= 1.0 or new_w == 0 or new_h == 0:
+        print(f"Detailer: force inpaint")
+        upscale = 1.0
+        new_w = w
+        new_h = h
+
+    if detailer_hook is not None:
+        new_w, new_h = detailer_hook.touch_scaled_size(new_w, new_h)
+
+    print(f"Detailer: segment upscale for ({bbox_w, bbox_h}) | crop region {w, h} x {upscale} -> {new_w, new_h}")
+
+    # upscale the mask tensor by a factor of 2 using bilinear interpolation
+    noise_mask = torch.from_numpy(noise_mask)
+    upscaled_mask = torch.nn.functional.interpolate(noise_mask.unsqueeze(0).unsqueeze(0), size=(new_h, new_w),
+                                                    mode='bilinear', align_corners=False)
+
+    upscaled_mask = upscaled_mask.squeeze().squeeze()
+
+    latent_frames = None
+    for image in image_frames:
+        image = torch.from_numpy(image).unsqueeze(0)
+
+        # upscale
+        upscaled_image = scale_tensor(new_w, new_h, image)
+
+        # ksampler
+        samples = to_latent_image(upscaled_image, vae)['samples']
+
+        if latent_frames is None:
+            latent_frames = samples
+        else:
+            latent_frames = torch.concat((latent_frames, samples), dim=0)
+
+    upscaled_mask = upscaled_mask.expand(len(image_frames), -1, -1)
+
+    latent = {
+        'noise_mask': upscaled_mask,
+        'samples': latent_frames
+    }
+
+    if detailer_hook is not None:
+        latent = detailer_hook.post_encode(latent)
+
+    refined_latent = ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
+                                             latent, denoise,
+                                             refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
+
+    if detailer_hook is not None:
+        refined_latent = detailer_hook.pre_decode(refined_latent)
+
+    refined_image_frames = None
+    for refined_sample in refined_latent['samples']:
+        refined_sample = refined_sample.unsqueeze(0)
+
+        # non-latent downscale - latent downscale cause bad quality
+        refined_image = vae.decode(refined_sample)
+
+        if refined_image_frames is None:
+            refined_image_frames = refined_image
+        else:
+            refined_image_frames = torch.concat((refined_image_frames, refined_image), dim=0)
+
+    if detailer_hook is not None:
+        refined_image_frames = detailer_hook.post_decode(refined_image_frames)
+
+    refined_image_frames = nodes.ImageScale().upscale(image=refined_image_frames, upscale_method='lanczos', width=w, height=h, crop='disabled')[0]
+
+    return refined_image_frames
 
 
 def composite_to(dest_latent, crop_region, src_latent):
@@ -648,16 +757,28 @@ def make_sam_mask_segmented(sam_model, segs, image, detection_hint, dilation,
         mask = combine_masks2(total_masks)
 
     finally:
-        if sam_model.is_auto_mode:
-            print(f"semd to {device}")
-            sam_model.to(device="cpu")
+        # Temporarily disabling the switch back to CPU after inference.
+        # Rationale: After multiple tests and comparisons, it's concluded that not only does it fail to conserve GPU memory, 
+        # but it also introduces additional IO overhead from transferring the model between devices.
+
+        # if sam_model.is_auto_mode:
+        #     sam_model.to(device=torch.device("cpu"))
+
+        pass
+
+    mask_working_device = torch.device("cpu")
 
     if mask is not None:
         mask = mask.float()
         mask = dilate_mask(mask.cpu().numpy(), dilation)
         mask = torch.from_numpy(mask)
+        mask = mask.to(device=mask_working_device)
     else:
-        mask = torch.zeros((8, 8), dtype=torch.float32, device="cpu")  # empty mask
+        # Extracting batch, height and width
+        height, width, _ = image.shape
+        mask = torch.zeros(
+            (height, width), dtype=torch.float32, device=mask_working_device
+        )  # empty mask
 
     stacked_masks = convert_and_stack_masks(total_masks)
 
@@ -969,6 +1090,10 @@ def segs_to_masklist(segs):
         mask[crop_region[1]:crop_region[3], crop_region[0]:crop_region[2]] |= (cropped_mask * 255).astype(np.uint8)
         mask = torch.from_numpy(mask.astype(np.float32) / 255.0)
         masks.append(mask)
+
+    if len(masks) == 0:
+        empty_mask = torch.zeros((h, w), dtype=torch.float32, device="cpu")
+        masks = [empty_mask]
 
     return masks
 

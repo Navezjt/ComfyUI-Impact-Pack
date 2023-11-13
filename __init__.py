@@ -97,6 +97,7 @@ from impact.logics import *
 from impact.util_nodes import *
 from impact.segs_nodes import *
 from impact.special_samplers import *
+from impact.hf_nodes import *
 
 impact.wildcards.read_wildcard_dict(wildcards_path)
 try:
@@ -122,6 +123,7 @@ NODE_CLASS_MAPPINGS = {
 
     "FaceDetailer": FaceDetailer,
     "FaceDetailerPipe": FaceDetailerPipe,
+    "MaskDetailerPipe": MaskDetailerPipe,
 
     "ToDetailerPipe": ToDetailerPipe,
     "ToDetailerPipeSDXL": ToDetailerPipeSDXL,
@@ -172,6 +174,7 @@ NODE_CLASS_MAPPINGS = {
     "BboxDetectorSEGS": BboxDetectorForEach,
     "SegmDetectorSEGS": SegmDetectorForEach,
     "ONNXDetectorSEGS": BboxDetectorForEach,
+    "ImpactSimpleDetectorSEGS_for_AD": SimpleDetectorForAnimateDiff,
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
@@ -206,9 +209,6 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSwitch": GeneralSwitch,
     "ImpactInversedSwitch": GeneralInversedSwitch,
 
-    # "SaveConditioning": SaveConditioning,
-    # "LoadConditioning": LoadConditioning,
-
     "ImpactWildcardProcessor": ImpactWildcardProcessor,
     "ImpactWildcardEncode": ImpactWildcardEncode,
 
@@ -220,6 +220,8 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSEGSToMaskBatch": SEGSToMaskBatch,
     "ImpactSEGSConcat": SEGSConcat,
     "ImpactSEGSPicker": SEGSPicker,
+
+    "SEGSDetailerForAnimateDiff": SEGSDetailerForAnimateDiff,
 
     "ImpactKSamplerBasicPipe": KSamplerBasicPipe,
     "ImpactKSamplerAdvancedBasicPipe": KSamplerAdvancedBasicPipe,
@@ -263,6 +265,10 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSetWidgetValue": ImpactSetWidgetValue,
     "ImpactNodeSetMuteState": ImpactNodeSetMuteState,
     "ImpactControlBridge": ImpactControlBridge,
+    "ImpactIsNotEmptySEGS": ImpactNotEmptySEGS,
+
+    "ImpactHFTransformersClassifierProvider": HF_TransformersClassifierProvider,
+    "ImpactSEGSClassify": SEGS_Classify
 }
 
 
@@ -270,6 +276,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BboxDetectorSEGS": "BBOX Detector (SEGS)",
     "SegmDetectorSEGS": "SEGM Detector (SEGS)",
     "ONNXDetectorSEGS": "ONNX Detector (SEGS/legacy) - use BBOXDetector",
+    "ImpactSimpleDetectorSEGS_for_AD": "Simple Detector for AnimateDiff (SEGS)",
     "ImpactSimpleDetectorSEGS": "Simple Detector (SEGS)",
     "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
     "ImpactControlNetApplySEGS": "ControlNetApply (SEGS)",
@@ -290,9 +297,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DetailerForEachPipe": "Detailer (SEGS/pipe)",
     "DetailerForEachDebug": "DetailerDebug (SEGS)",
     "DetailerForEachDebugPipe": "DetailerDebug (SEGS/pipe)",
+    "SEGSDetailerForAnimateDiff": "Detailer For AnimateDiff (SEGS/pipe)",
+
     "SAMDetectorCombined": "SAMDetector (combined)",
     "SAMDetectorSegmented": "SAMDetector (segmented)",
     "FaceDetailerPipe": "FaceDetailer (pipe)",
+    "MaskDetailerPipe": "MaskDetailer (Pipe)",
 
     "FromDetailerPipeSDXL": "FromDetailer (SDXL/pipe)",
     "BasicPipeToDetailerPipeSDXL": "BasicPipe -> DetailerPipe (SDXL)",
@@ -345,6 +355,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactMakeImageList": "Make Image List",
     "ImpactMakeImageBatch": "Make Image Batch",
     "ImpactStringSelector": "String Selector",
+    "ImpactIsNotEmptySEGS": "SEGS isn't Empty",
 
     "RemoveNoiseMask": "Remove Noise Mask",
 
@@ -354,6 +365,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSetWidgetValue": "Set Widget Value",
     "ImpactNodeSetMuteState": "Set Mute State",
     "ImpactControlBridge": "Control Bridge",
+
+    "ImpactHFTransformersClassifierProvider": "HF Transformers Classifier Provider",
+    "ImpactSEGSClassify": "SEGS Classify",
 
     "LatentSwitch": "Switch (latent/legacy)",
     "SEGSSwitch": "Switch (SEGS/legacy)"

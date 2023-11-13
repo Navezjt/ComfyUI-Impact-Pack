@@ -43,6 +43,20 @@ class ImpactCompare:
             return (False, )
 
 
+class ImpactNotEmptySEGS:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"segs": ("SEGS",)}}
+
+    FUNCTION = "doit"
+    CATEGORY = "ImpactPack/Logic"
+
+    RETURN_TYPES = ("BOOLEAN", )
+
+    def doit(self, segs):
+        return (segs[1] != [], )
+
+
 class ImpactConditionalBranch:
     @classmethod
     def INPUT_TYPES(cls):
@@ -365,7 +379,7 @@ try:
     sys.__comfyui_manager_register_message_collapse(filter_message)
 
 except Exception as e:
-    print(f"e: {e}")
+    print(f"[WARN] ComfyUI-Impact-Pack: `ComfyUI` or `ComfyUI-Manager` is an outdated version.")
     pass
 
 

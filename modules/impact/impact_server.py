@@ -106,7 +106,7 @@ async def sam_prepare(request):
 
         model_name = os.path.join(impact_pack.model_path, "sams", model_name)
 
-        print(f"ComfyUI-Impact-Pack: Loading SAM model '{impact_pack.model_path}'")
+        print(f"[INFO] ComfyUI-Impact-Pack: Loading SAM model '{impact_pack.model_path}'")
 
         filename, image_dir = folder_paths.annotated_filepath(data["filename"])
 
@@ -122,7 +122,7 @@ async def sam_prepare(request):
         thread = threading.Thread(target=async_prepare_sam, args=(image_dir, model_name, filename,))
         thread.start()
 
-        print(f"ComfyUI-Impact-Pack: SAM model loaded. ")
+        print(f"[INFO] ComfyUI-Impact-Pack: SAM model loaded. ")
 
 
 @server.PromptServer.instance.routes.post("/sam/release")
@@ -133,7 +133,7 @@ async def release_sam(request):
         del sam_predictor
         sam_predictor = None
 
-    print(f"ComfyUI-Impact-Pack: unloading SAM model")
+    print(f"[INFO] ComfyUI-Impact-Pack: unloading SAM model")
 
 
 @server.PromptServer.instance.routes.post("/sam/detect")
@@ -189,6 +189,12 @@ async def sam_detect(request):
             return web.Response(status=400)
 
 
+@server.PromptServer.instance.routes.get("/impact/wildcards/list")
+async def wildcards_list(request):
+    data = {'data': impact.wildcards.get_wildcard_list()}
+    return web.json_response(data)
+
+
 @server.PromptServer.instance.routes.post("/impact/wildcards")
 async def populate_wildcards(request):
     data = await request.json()
@@ -231,12 +237,15 @@ async def view_validate(request):
     if "filename" in request.rel_url.query:
         filename = request.rel_url.query["filename"]
         subfolder = request.rel_url.query["subfolder"]
-        filename, output_dir = folder_paths.annotated_filepath(filename)
+        filename, base_dir = folder_paths.annotated_filepath(filename)
 
         if filename == '' or filename[0] == '/' or '..' in filename:
             return web.Response(status=400)
 
-        file = os.path.join(output_dir, subfolder, filename)
+        if base_dir is None:
+            base_dir = folder_paths.get_input_directory()
+
+        file = os.path.join(base_dir, subfolder, filename)
 
         if os.path.isfile(file):
             return web.Response(status=200)
@@ -439,7 +448,7 @@ def onprompt(json_data):
         workflow_imagereceiver_update(json_data)
         regional_sampler_seed_update(json_data)
     except Exception as e:
-        print(f"[ComfyUI-Impact-Pack] Error on prompt: Several features will not work.\n{e}")
+        print(f"[WARN] ComfyUI-Impact-Pack: Error on prompt - several features will not work.\n{e}")
 
     return json_data
 

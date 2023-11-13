@@ -51,34 +51,39 @@ This custom node helps to conveniently enhance images through Detector, Detailer
 * Bitwise(MASK + MASK) - Combine two masks.
 * SEGM Detector (SEGS) - Detects segmentation and returns SEGS from the input image.
 * BBOX Detector (SEGS) - Detects bounding boxes and returns SEGS from the input image.
-* Detailer (SEGS) - Refines the image based on SEGS.
-* DetailerDebug (SEGS) - Refines the image based on SEGS. Additionally, it provides the ability to monitor the cropped image and the refined image of the cropped image.
-  * To prevent regeneration caused by the seed that does not change every time when using 'external_seed', please disable the 'seed random generate' option in the 'Detailer...' node.
-* MASK to SEGS - Generates SEGS based on the mask.
-* MediaPipe FaceMesh to SEGS - Separate each landmark from the mediapipe facemesh image to create labeled SEGS.
-  * Usually, the size of images created through the MediaPipe facemesh preprocessor is downscaled. It resizes the MediaPipe facemesh image to the original size given as reference_image_opt for matching sizes during processing. 
-* ToBinaryMask - Separates the mask generated with alpha values between 0 and 255 into 0 and 255. The non-zero parts are always set to 255.
-* Masks to Mask List - This node converts the MASKS in batch form to a list of individual masks.
-* Mask List to Masks - This node converts the MASK list to MASK batch form.
-* EmptySEGS - Provides an empty SEGS.
-* MaskPainter - Provides a feature to draw masks.
-* FaceDetailer - Easily detects faces and improves them.
-* FaceDetailer (pipe) - Easily detects faces and improves them (for multipass).
+
+* Detailer
+  * Detailer (SEGS) - Refines the image based on SEGS.
+  * DetailerDebug (SEGS) - Refines the image based on SEGS. Additionally, it provides the ability to monitor the cropped image and the refined image of the cropped image.
+    * To prevent regeneration caused by the seed that does not change every time when using 'external_seed', please disable the 'seed random generate' option in the 'Detailer...' node.
+  * MASK to SEGS - Generates SEGS based on the mask.
+  * MediaPipe FaceMesh to SEGS - Separate each landmark from the mediapipe facemesh image to create labeled SEGS.
+    * Usually, the size of images created through the MediaPipe facemesh preprocessor is downscaled. It resizes the MediaPipe facemesh image to the original size given as reference_image_opt for matching sizes during processing. 
+  * ToBinaryMask - Separates the mask generated with alpha values between 0 and 255 into 0 and 255. The non-zero parts are always set to 255.
+  * Masks to Mask List - This node converts the MASKS in batch form to a list of individual masks.
+  * Mask List to Masks - This node converts the MASK list to MASK batch form.
+  * EmptySEGS - Provides an empty SEGS.
+  * MaskPainter - Provides a feature to draw masks.
+  * FaceDetailer - Easily detects faces and improves them.
+  * FaceDetailer (pipe) - Easily detects faces and improves them (for multipass).
+  * MaskDetailer (pipe) - This is a simple inpaint node that applies the Detailer to the mask area.
 
 * `FromDetailer (SDXL/pipe), BasicPipe -> DetailerPipe (SDXL), Edit DetailerPipe (SDXL)` - These are pipe functions used in Detailer for utilizing the refiner model of SDXL.
 
 * SEGS Manipulation nodes 
   * SEGSDetailer - Performs detailed work on SEGS without pasting it back onto the original image.
   * SEGSPaste - Pastes the results of SEGS onto the original image.
-    * If `ref_image_opt` is present, the images contained within SEGS are ignored. Instead, the image within `ref_image_opt` corresponding to the crop area of SEGS is taken and pasted. The size of the image in `ref_image_opt` should be the same as the original image size. 
+    * If `ref_image_opt` is present, the images contained within SEGS are ignored. Instead, the image within `ref_image_opt` corresponding to the crop area of SEGS is taken and pasted. The size of the image in `ref_image_opt` should be the same as the original image size.
+    * This node can be used in conjunction with the processing results of AnimateDiff.
   * SEGSPreview - Provides a preview of SEGS.
-     * This option is used to preview the improved image through `SEGSDetailer` before merging it into the original. Prior to going through ```SEGSDetailer```, SEGS only contains mask information without image information. If fallback_image_opt is connected to the original image, SEGS without image information will generate a preview using the original image. However, if SEGS already contains image information, fallback_image_opt will be ignored. 
+     * This option is used to preview the improved image through `SEGSDetailer` before merging it into the original. Prior to going through ```SEGSDetailer```, SEGS only contains mask information without image information. If fallback_image_opt is connected to the original image, SEGS without image information will generate a preview using the original image. However, if SEGS already contains image information, fallback_image_opt will be ignored.
+     * This node can be used in conjunction with the processing results of AnimateDiff.
   * SEGSToImageList - Convert SEGS To Image List
   * SEGSToMaskList - Convert SEGS To Mask List
   * SEGS Filter (label) - This node filters SEGS based on the label of the detected areas. 
   * SEGS Filter (ordered) - This node sorts SEGS based on size and position and retrieves SEGs within a certain range. 
   * SEGS Filter (range) - This node retrieves only SEGs from SEGS that have a size and position within a certain range.
-  * SEGSConcat - Concatenate segs1 and segs2. If source shape of segs1 and segs2 are different then segs2 will be ignored.
+  * SEGSConcat - Concatenate segs1 and segs2. If source shape of segs1 and segs2 are different from segs2 will be ignored.
   * Picker (SEGS) - Among the input SEGS, you can select a specific SEG through a dialog. If no SEG is selected, it outputs an empty SEGS. Increasing the batch_size of SEGSDetailer can be used for the purpose of selecting from the candidates.
   * DecomposeSEGS - Decompose SEGS to allow for detailed manipulation.
   * AssembleSEGS - Reassemble the decomposed SEGS.
@@ -87,6 +92,7 @@ This custom node helps to conveniently enhance images through Detector, Detailer
   * Dilate SEG_ELT - Dilate the mask of SEG_ELT.
 
 * Dilate Mask - Dilate Mask. 
+  * Support erosion for negative value.
  
 * Pipe nodes
    * ToDetailerPipe, FromDetailerPipe - These nodes are used to bundle multiple inputs used in the detailer, such as models and vae, ..., into a single DETAILER_PIPE or extract the elements that are bundled in the DETAILER_PIPE.
@@ -165,9 +171,6 @@ This takes latent as input and outputs latent as the result.
 
 * KSampler (pipe), KSampler (advanced/pipe)
 
-* ImpactCompare, ImpactConditionalBranch, ImpactInt, ImpactValueSender, ImpactValueReceiver, ImpactImageInfo, ImpactMinMax, ImpactNeg, ImpactConditionalStopIteration
-- Experimental set of nodes for implementing loop functionality (tutorial to be prepared later / [example workflow](test/loop-test.json)).
-
 * Image batch To Image List - Convert Image batch to Image List
 - You can use images generated in a multi batch to handle them
 * Make Image List - Convert multiple images into a single image list
@@ -178,6 +181,8 @@ This takes latent as input and outputs latent as the result.
 * Combine Conditionings - It takes multiple conditionings as input and combines them into a single conditioning.
 
 * Logics (experimental) - These nodes are experimental nodes designed to implement the logic for loops and dynamic switching.
+  * ImpactCompare, ImpactConditionalBranch, ImpactInt, ImpactValueSender, ImpactValueReceiver, ImpactImageInfo, ImpactMinMax, ImpactNeg, ImpactConditionalStopIteration
+  * ImpactIsNotEmptySEGS - This node returns `true` only if the input SEGS is not empty. 
   * Queue Trigger - When this node is executed, it adds a new queue to assist with repetitive tasks. It will only execute if the signal's status changes.
   * Set Widget Value - This node sets one of the optional inputs to the specified node's widget. An error may occur if the types do not match.
   * Set Mute State - This node changes the mute state of a specific node.
@@ -187,6 +192,17 @@ This takes latent as input and outputs latent as the result.
     * If you want to change the value of the seed at each iteration, please ensure that Set Widget Value is executed at the end of the workflow instead of using randomization.
       * It is not a problem if the seed changes due to randomization as long as it occurs after the Control Bridge section.
   * You can find the `node_id` by checking through [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager) using the format `Badge: #ID Nickname`.
+  * Experimental set of nodes for implementing loop functionality (tutorial to be prepared later / [example workflow](test/loop-test.json)).
+
+* HuggingFace - These nodes provide functionalities based on HuggingFace repository models.
+  * `HF Transformers Classifier Provider` - This is a node that provides a classifier based on HuggingFace's transformers models.
+    * The 'repo id' parameter should contain HuggingFace's repo id. When `preset_repo_id` is set to `Manual repo id`, use the manually entered repo id in `manual_repo_id`.
+    * e.g. 'rizvandwiki/gender-classification-2' is a repository that provides a model for gender classification.
+  * `SEGS Classify` - This node utilizes the `TRANSFORMERS_CLASSIFIER` loaded with 'HF Transformers Classifier Provider' to classify `SEGS`.
+    * The 'expr' allows for forms like `label > number`, and in the case of `preset_expr` being `Manual expr`, it uses the expression entered in `manual_expr`.
+    * For example, in the case of `male <= 0.4`, if the score of the `male` label in the classification result is less than or equal to 0.4, it is categorized as `filtered_SEGS`, otherwise, it is categorized as `remained_SEGS`.
+      * For supported labels, please refer to the `config.json` of the respective HuggingFace repository.
+    * `#Female` and `#Male` are symbols that group multiple labels such as `Female, women, woman, ...`, for convenience, rather than being single labels.
 
 ## MMDet nodes
 * MMDetDetectorProvider - Loads the MMDet model to provide BBOX_DETECTOR and SEGM_DETECTOR.
@@ -386,5 +402,7 @@ biegert/[ComfyUI-CLIPSeg](https://github.com/biegert/ComfyUI-CLIPSeg) - This is 
 
 BlenderNeok/[ComfyUI-TiledKSampler](https://github.com/BlenderNeko/ComfyUI_TiledKSampler) - 
 The tile sampler allows high-resolution sampling even in places with low GPU VRAM.
+
+BlenderNeok/[ComfyUI_Noise](https://github.com/BlenderNeko/ComfyUI_Noise) - The noise injection feature relies on this function.
 
 WASasquatch/[was-node-suite-comfyui](https://github.com/WASasquatch/was-node-suite-comfyui) - A powerful custom node extensions of ComfyUI.
