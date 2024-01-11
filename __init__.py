@@ -9,6 +9,7 @@ import shutil
 import folder_paths
 import os
 import sys
+import traceback
 
 comfy_path = os.path.dirname(folder_paths.__file__)
 impact_path = os.path.join(os.path.dirname(__file__))
@@ -18,7 +19,6 @@ wildcards_path = os.path.join(os.path.dirname(__file__), "wildcards")
 custom_wildcards_path = os.path.join(os.path.dirname(__file__), "custom_wildcards")
 
 sys.path.append(modules_path)
-
 
 import impact.config
 import impact.sample_error_enhancer
@@ -33,8 +33,12 @@ def do_install():
 
 
 # ensure dependency
+if not os.path.exists(os.path.join(subpack_path, ".git")) and os.path.exists(subpack_path):
+    print(f"### CompfyUI-Impact-Pack: corrupted subpack detected.")
+    shutil.rmtree(subpack_path)
+
 if impact.config.get_config()['dependency_version'] < impact.config.dependency_version or not os.path.exists(subpack_path):
-    print(f"## ComfyUI-Impact-Pack: Updating dependencies")
+    print(f"### ComfyUI-Impact-Pack: Updating dependencies [{impact.config.get_config()['dependency_version']} -> {impact.config.dependency_version}]")
     do_install()
 
 sys.path.append(subpack_path)
@@ -42,6 +46,8 @@ sys.path.append(subpack_path)
 # Core
 # recheck dependencies for colab
 try:
+    import impact.subpack_nodes  # This import must be done before cv2.
+
     import folder_paths
     import torch
     import cv2
@@ -98,12 +104,28 @@ from impact.util_nodes import *
 from impact.segs_nodes import *
 from impact.special_samplers import *
 from impact.hf_nodes import *
+from impact.bridge_nodes import *
+from impact.hook_nodes import *
 
-impact.wildcards.read_wildcard_dict(wildcards_path)
-try:
-    impact.wildcards.read_wildcard_dict(impact.config.get_config()['custom_wildcards'])
-except Exception as e:
-    print(f"[Impact Pack] Failed to load custom wildcards directory.")
+import threading
+
+wildcard_path = impact.config.get_config()['custom_wildcards']
+
+
+def wildcard_load():
+    with wildcards.wildcard_lock:
+        impact.wildcards.read_wildcard_dict(wildcards_path)
+
+        try:
+            impact.wildcards.read_wildcard_dict(impact.config.get_config()['custom_wildcards'])
+        except Exception as e:
+            print(f"[Impact Pack] Failed to load custom wildcards directory.")
+
+        print(f"[Impact Pack] Wildcards loading done.")
+
+
+threading.Thread(target=wildcard_load).start()
+
 
 NODE_CLASS_MAPPINGS = {
     "SAMLoader": SAMLoader,
@@ -154,22 +176,33 @@ NODE_CLASS_MAPPINGS = {
     "DenoiseScheduleHookProvider": DenoiseScheduleHookProvider,
     "CfgScheduleHookProvider": CfgScheduleHookProvider,
     "NoiseInjectionHookProvider": NoiseInjectionHookProvider,
-    "NoiseInjectionDetailerHookProvider": NoiseInjectionDetailerHookProvider,
+    "UnsamplerHookProvider": UnsamplerHookProvider,
     "CoreMLDetailerHookProvider": CoreMLDetailerHookProvider,
+
+    "DetailerHookCombine": DetailerHookCombine,
+    "NoiseInjectionDetailerHookProvider": NoiseInjectionDetailerHookProvider,
+    "UnsamplerDetailerHookProvider": UnsamplerDetailerHookProvider,
+    "DenoiseSchedulerDetailerHookProvider": DenoiseSchedulerDetailerHookProvider,
+    "SEGSOrderedFilterDetailerHookProvider": SEGSOrderedFilterDetailerHookProvider,
+    "SEGSRangeFilterDetailerHookProvider": SEGSRangeFilterDetailerHookProvider,
+    "SEGSLabelFilterDetailerHookProvider": SEGSLabelFilterDetailerHookProvider,
 
     "BitwiseAndMask": BitwiseAndMask,
     "SubtractMask": SubtractMask,
     "AddMask": AddMask,
-    "Segs & Mask": SegsBitwiseAndMask,
-    "Segs & Mask ForEach": SegsBitwiseAndMaskForEach,
+    "ImpactSegsAndMask": SegsBitwiseAndMask,
+    "ImpactSegsAndMaskForEach": SegsBitwiseAndMaskForEach,
     "EmptySegs": EmptySEGS,
 
     "MediaPipeFaceMeshToSEGS": MediaPipeFaceMeshToSEGS,
     "MaskToSEGS": MaskToSEGS,
+    "MaskToSEGS_for_AnimateDiff": MaskToSEGS_for_AnimateDiff,
     "ToBinaryMask": ToBinaryMask,
     "MasksToMaskList": MasksToMaskList,
     "MaskListToMaskBatch": MaskListToMaskBatch,
-    "ImageListToImageBatch": ImageListToMaskBatch,
+    "ImageListToImageBatch": ImageListToImageBatch,
+    "SetDefaultImageForSEGS": DefaultImageForSEGS,
+    "RemoveImageFromSEGS": RemoveImageFromSEGS,
 
     "BboxDetectorSEGS": BboxDetectorForEach,
     "SegmDetectorSEGS": SegmDetectorForEach,
@@ -178,6 +211,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
+    "ImpactControlNetClearSEGS": ControlNetClearSEGS,
 
     "ImpactDecomposeSEGS": DecomposeSEGS,
     "ImpactAssembleSEGS": AssembleSEGS,
@@ -185,6 +219,9 @@ NODE_CLASS_MAPPINGS = {
     "ImpactEdit_SEG_ELT": Edit_SEG_ELT,
     "ImpactDilate_Mask_SEG_ELT": Dilate_SEG_ELT,
     "ImpactDilateMask": DilateMask,
+    "ImpactGaussianBlurMask": GaussianBlurMask,
+    "ImpactDilateMaskInSEGS": DilateMaskInSEGS,
+    "ImpactGaussianBlurMaskInSEGS": GaussianBlurMaskInSEGS,
     "ImpactScaleBy_BBOX_SEG_ELT": SEG_ELT_BBOX_ScaleBy,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
@@ -199,6 +236,7 @@ NODE_CLASS_MAPPINGS = {
     "TwoAdvancedSamplersForMask": TwoAdvancedSamplersForMask,
 
     "PreviewBridge": PreviewBridge,
+    "PreviewBridgeLatent": PreviewBridgeLatent,
     "ImageSender": ImageSender,
     "ImageReceiver": ImageReceiver,
     "LatentSender": LatentSender,
@@ -220,6 +258,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSEGSToMaskBatch": SEGSToMaskBatch,
     "ImpactSEGSConcat": SEGSConcat,
     "ImpactSEGSPicker": SEGSPicker,
+    "ImpactMakeTileSEGS": MakeTileSEGS,
 
     "SEGSDetailerForAnimateDiff": SEGSDetailerForAnimateDiff,
 
@@ -239,6 +278,7 @@ NODE_CLASS_MAPPINGS = {
     "RegionalPrompt": RegionalPrompt,
 
     "ImpactCombineConditionings": CombineConditionings,
+    "ImpactConcatConditionings": ConcatConditionings,
 
     "ImpactSEGSLabelFilter": SEGSLabelFilter,
     "ImpactSEGSRangeFilter": SEGSRangeFilter,
@@ -247,10 +287,11 @@ NODE_CLASS_MAPPINGS = {
     "ImpactCompare": ImpactCompare,
     "ImpactConditionalBranch": ImpactConditionalBranch,
     "ImpactInt": ImpactInt,
-    # "ImpactFloat": ImpactFloat,
+    "ImpactFloat": ImpactFloat,
     "ImpactValueSender": ImpactValueSender,
     "ImpactValueReceiver": ImpactValueReceiver,
     "ImpactImageInfo": ImpactImageInfo,
+    "ImpactLatentInfo": ImpactLatentInfo,
     "ImpactMinMax": ImpactMinMax,
     "ImpactNeg": ImpactNeg,
     "ImpactConditionalStopIteration": ImpactConditionalStopIteration,
@@ -262,10 +303,14 @@ NODE_CLASS_MAPPINGS = {
     "ImpactDummyInput": ImpactDummyInput,
 
     "ImpactQueueTrigger": ImpactQueueTrigger,
+    "ImpactQueueTriggerCountdown": ImpactQueueTriggerCountdown,
     "ImpactSetWidgetValue": ImpactSetWidgetValue,
     "ImpactNodeSetMuteState": ImpactNodeSetMuteState,
     "ImpactControlBridge": ImpactControlBridge,
     "ImpactIsNotEmptySEGS": ImpactNotEmptySEGS,
+    "ImpactSleep": ImpactSleep,
+    "ImpactRemoteBoolean": ImpactRemoteBoolean,
+    "ImpactRemoteInt": ImpactRemoteInt,
 
     "ImpactHFTransformersClassifierProvider": HF_TransformersClassifierProvider,
     "ImpactSEGSClassify": SEGS_Classify
@@ -273,6 +318,8 @@ NODE_CLASS_MAPPINGS = {
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "SAMLoader": "SAMLoader (Impact)",
+
     "BboxDetectorSEGS": "BBOX Detector (SEGS)",
     "SegmDetectorSEGS": "SEGM Detector (SEGS)",
     "ONNXDetectorSEGS": "ONNX Detector (SEGS/legacy) - use BBOXDetector",
@@ -286,10 +333,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SegsToCombinedMask": "SEGS to MASK (combined)",
     "MediaPipeFaceMeshToSEGS": "MediaPipe FaceMesh to SEGS",
     "MaskToSEGS": "MASK to SEGS",
+    "MaskToSEGS_for_AnimateDiff": "MASK to SEGS for AnimateDiff",
     "BitwiseAndMaskForEach": "Bitwise(SEGS & SEGS)",
     "SubtractMaskForEach": "Bitwise(SEGS - SEGS)",
-    "Segs & Mask": "Bitwise(SEGS & MASK)",
-    "Segs & Mask ForEach": "Bitwise(SEGS & MASKS ForEach)",
+    "ImpactSegsAndMask": "Bitwise(SEGS & MASK)",
+    "ImpactSegsAndMaskForEach": "Bitwise(SEGS & MASKS ForEach)",
     "BitwiseAndMask": "Bitwise(MASK & MASK)",
     "SubtractMask": "Bitwise(MASK - MASK)",
     "AddMask": "Bitwise(MASK + MASK)",
@@ -314,7 +362,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "EditDetailerPipe": "Edit DetailerPipe",
 
     "LatentPixelScale": "Latent Scale (on Pixel Space)",
-    "IterativeLatentUpscale": "Iterative Upscale (Latent)",
+    "IterativeLatentUpscale": "Iterative Upscale (Latent/on Pixel Space)",
     "IterativeImageUpscale": "Iterative Upscale (Image)",
 
     "TwoSamplersForMaskUpscalerProvider": "TwoSamplersForMask Upscaler Provider",
@@ -332,6 +380,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSEGSToMaskList": "SEGS to Mask List",
     "ImpactSEGSToMaskBatch": "SEGS to Mask Batch",
     "ImpactSEGSPicker": "Picker (SEGS)",
+    "ImpactMakeTileSEGS": "Make Tile SEGS",
 
     "ImpactDecomposeSEGS": "Decompose (SEGS)",
     "ImpactAssembleSEGS": "Assemble (SEGS)",
@@ -340,8 +389,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactDilate_Mask_SEG_ELT": "Dilate Mask (SEG_ELT)",
     "ImpactScaleBy_BBOX_SEG_ELT": "ScaleBy BBOX (SEG_ELT)",
     "ImpactDilateMask": "Dilate Mask",
+    "ImpactGaussianBlurMask": "Gaussian Blur Mask",
+    "ImpactDilateMaskInSEGS": "Dilate Mask (SEGS)",
+    "ImpactGaussianBlurMaskInSEGS": "Gaussian Blur Mask (SEGS)",
 
-    "PreviewBridge": "Preview Bridge",
+    "PreviewBridge": "Preview Bridge (Image)",
+    "PreviewBridgeLatent": "Preview Bridge (Latent)",
     "ImageSender": "Image Sender",
     "ImageReceiver": "Image Receiver",
     "ImageMaskSwitch": "Switch (images, mask)",
@@ -356,15 +409,22 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactMakeImageBatch": "Make Image Batch",
     "ImpactStringSelector": "String Selector",
     "ImpactIsNotEmptySEGS": "SEGS isn't Empty",
+    "SetDefaultImageForSEGS": "Set Default Image for SEGS",
+    "RemoveImageFromSEGS": "Remove Image from SEGS",
 
     "RemoveNoiseMask": "Remove Noise Mask",
 
     "ImpactCombineConditionings": "Combine Conditionings",
+    "ImpactConcatConditionings": "Concat Conditionings",
 
     "ImpactQueueTrigger": "Queue Trigger",
+    "ImpactQueueTriggerCountdown": "Queue Trigger (Countdown)",
     "ImpactSetWidgetValue": "Set Widget Value",
     "ImpactNodeSetMuteState": "Set Mute State",
     "ImpactControlBridge": "Control Bridge",
+    "ImpactSleep": "Sleep",
+    "ImpactRemoteBoolean": "Remote Boolean (on prompt)",
+    "ImpactRemoteInt": "Remote Int (on prompt)",
 
     "ImpactHFTransformersClassifierProvider": "HF Transformers Classifier Provider",
     "ImpactSEGSClassify": "SEGS Classify",
@@ -402,9 +462,25 @@ try:
 
     NODE_CLASS_MAPPINGS.update(impact.subpack_nodes.NODE_CLASS_MAPPINGS)
     NODE_DISPLAY_NAME_MAPPINGS.update(impact.subpack_nodes.NODE_DISPLAY_NAME_MAPPINGS)
-
-except:
-    pass
+except Exception as e:
+    print("### ComfyUI-Impact-Pack: (IMPORT FAILED) Subpack\n")
+    print("  The module at the `custom_nodes/ComfyUI-Impact-Pack/impact_subpack` path appears to be incomplete.")
+    print("  Recommended to delete the path and restart ComfyUI.")
+    print("  If the issue persists, please report it to https://github.com/ltdrdata/ComfyUI-Impact-Pack/issues.")
+    print("\n---------------------------------")
+    traceback.print_exc()
+    print("---------------------------------\n")
 
 WEB_DIRECTORY = "js"
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+
+
+try:
+    import cm_global
+    cm_global.register_extension('ComfyUI-Impact-Pack',
+                                 {'version': config.version_code,
+                                  'name': 'Impact Pack',
+                                  'nodes': set(NODE_CLASS_MAPPINGS.keys()),
+                                  'description': 'This extension provides inpainting functionality based on the detector and detailer, along with convenient workflow features like wildcards and logics.', })
+except:
+    pass

@@ -2,9 +2,10 @@ import configparser
 import os
 
 
-version = "V4.30.3"
+version_code = [4, 62]
+version = f"V{version_code[0]}.{version_code[1]}" + (f'.{version_code[2]}' if len(version_code) > 2 else '')
 
-dependency_version = 17
+dependency_version = 20
 
 my_path = os.path.dirname(__file__)
 old_config_path = os.path.join(my_path, "impact-pack.ini")
@@ -21,7 +22,8 @@ def write_config():
                             'mmdet_skip': str(get_config()['mmdet_skip']),
                             'sam_editor_cpu': str(get_config()['sam_editor_cpu']),
                             'sam_editor_model': get_config()['sam_editor_model'],
-                            'custom_wildcards': get_config()['custom_wildcards']
+                            'custom_wildcards': get_config()['custom_wildcards'],
+                            'disable_gpu_opencv': get_config()['disable_gpu_opencv'],
                         }
     with open(config_path, 'w') as configfile:
         config.write(configfile)
@@ -38,7 +40,8 @@ def read_config():
                     'mmdet_skip': default_conf['mmdet_skip'].lower() == 'true' if 'mmdet_skip' in default_conf else True,
                     'sam_editor_cpu': default_conf['sam_editor_cpu'].lower() == 'true' if 'sam_editor_cpu' in default_conf else False,
                     'sam_editor_model': 'sam_vit_b_01ec64.pth',
-                    'custom_wildcards': default_conf['custom_wildcards'] if 'custom_wildcards' in default_conf else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "custom_wildcards"))
+                    'custom_wildcards': default_conf['custom_wildcards'] if 'custom_wildcards' in default_conf else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "custom_wildcards")),
+                    'disable_gpu_opencv': default_conf['disable_gpu_opencv'].lower() == 'true' if 'disable_gpu_opencv' in default_conf else True
                }
 
     except Exception:
@@ -47,7 +50,8 @@ def read_config():
             'mmdet_skip': True,
             'sam_editor_cpu': False,
             'sam_editor_model': 'sam_vit_b_01ec64.pth',
-            'custom_wildcards': os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "custom_wildcards"))
+            'custom_wildcards': os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "custom_wildcards")),
+            'disable_gpu_opencv': True
         }
 
 

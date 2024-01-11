@@ -1,5 +1,6 @@
 import os
 import threading
+import traceback
 
 from aiohttp import web
 
@@ -7,8 +8,11 @@ import impact
 import server
 import folder_paths
 
+import torchvision
+
 import impact.core as core
 import impact.impact_pack as impact_pack
+from impact.utils import to_tensor
 from segment_anything import SamPredictor, sam_model_registry
 import numpy as np
 import nodes
@@ -221,12 +225,12 @@ async def segs_picker(request):
     idx = int(request.rel_url.query.get('idx', ''))
 
     if node_id in segs_picker_map and idx < len(segs_picker_map[node_id]):
-        pil = segs_picker_map[node_id][idx]
+        img = to_tensor(segs_picker_map[node_id][idx]).permute(0, 3, 1, 2).squeeze(0)
+        pil = torchvision.transforms.ToPILImage('RGB')(img)
 
         image_bytes = BytesIO()
         pil.save(image_bytes, format="PNG")
         image_bytes.seek(0)
-
         return web.Response(status=200, body=image_bytes, content_type='image/png', headers={"Content-Disposition": f"filename={node_id}{idx}.png"})
 
     return web.Response(status=400)
@@ -270,33 +274,36 @@ async def view_validate(request):
 
 @server.PromptServer.instance.routes.get("/impact/set/pb_id_image")
 async def set_previewbridge_image(request):
-    if "filename" in request.rel_url.query:
-        node_id = request.rel_url.query["node_id"]
-        filename = request.rel_url.query["filename"]
-        path_type = request.rel_url.query["type"]
-        subfolder = request.rel_url.query["subfolder"]
-        filename, output_dir = folder_paths.annotated_filepath(filename)
+    try:
+        if "filename" in request.rel_url.query:
+            node_id = request.rel_url.query["node_id"]
+            filename = request.rel_url.query["filename"]
+            path_type = request.rel_url.query["type"]
+            subfolder = request.rel_url.query["subfolder"]
+            filename, output_dir = folder_paths.annotated_filepath(filename)
 
-        if filename == '' or filename[0] == '/' or '..' in filename:
-            return web.Response(status=400)
+            if filename == '' or filename[0] == '/' or '..' in filename:
+                return web.Response(status=400)
 
-        if output_dir is None:
-            if path_type == 'input':
-                output_dir = folder_paths.get_input_directory()
-            elif path_type == 'output':
-                output_dir = folder_paths.get_output_directory()
-            else:
-                output_dir = folder_paths.get_temp_directory()
+            if output_dir is None:
+                if path_type == 'input':
+                    output_dir = folder_paths.get_input_directory()
+                elif path_type == 'output':
+                    output_dir = folder_paths.get_output_directory()
+                else:
+                    output_dir = folder_paths.get_temp_directory()
 
-        file = os.path.join(output_dir, subfolder, filename)
-        item = {
-            'filename': filename,
-            'type': path_type,
-            'subfolder': subfolder,
-        }
-        pb_id = core.set_previewbridge_image(node_id, file, item)
+            file = os.path.join(output_dir, subfolder, filename)
+            item = {
+                'filename': filename,
+                'type': path_type,
+                'subfolder': subfolder,
+            }
+            pb_id = core.set_previewbridge_image(node_id, file, item)
 
-        return web.Response(status=200, text=pb_id)
+            return web.Response(status=200, text=pb_id)
+    except Exception:
+        traceback.print_exc()
 
     return web.Response(status=400)
 
@@ -347,7 +354,7 @@ def onprompt_for_switch(json_data):
                 inversed_switch_info[k] = select_input
 
         elif cls in ['ImpactSwitch', 'LatentSwitch', 'SEGSSwitch', 'ImpactMakeImageList']:
-            if 'sel_mode' in v['inputs'] and v['inputs']['sel_mode']:
+            if 'sel_mode' in v['inputs'] and v['inputs']['sel_mode'] and 'select' in v['inputs']:
                 select_input = v['inputs']['select']
                 if isinstance(select_input, list) and len(select_input) == 2:
                     input_node = json_data['prompt'][select_input[0]]
@@ -378,9 +385,6 @@ def onprompt_for_switch(json_data):
 
         for kk in disable_targets:
             del v['inputs'][kk]
-
-    return json_data
-
 
 def onprompt_for_pickers(json_data):
     detected_pickers = set()
@@ -437,13 +441,83 @@ def regional_sampler_seed_update(json_data):
                 new_seed = random.randint(0, 1125899906842624)
 
             if new_seed is not None:
-                server.PromptServer.instance.send_sync("impact-node-feedback", {"id": k, "widget_name": "seed_2nd", "type": "INT", "value": new_seed})
+                server.PromptServer.instance.send_sync("impact-node-feedback", {"node_id": k, "widget_name": "seed_2nd", "type": "INT", "value": new_seed})
+
+
+def onprompt_populate_wildcards(json_data):
+    prompt = json_data['prompt']
+
+    updated_widget_values = {}
+    for k, v in prompt.items():
+        if 'class_type' in v and (v['class_type'] == 'ImpactWildcardEncode' or v['class_type'] == 'ImpactWildcardProcessor'):
+            inputs = v['inputs']
+            if inputs['mode'] and isinstance(inputs['populated_text'], str):
+                if isinstance(inputs['seed'], list):
+                    try:
+                        input_node = prompt[inputs['seed'][0]]
+                        if input_node['class_type'] == 'ImpactInt':
+                            input_seed = int(input_node['inputs']['value'])
+                            if not isinstance(input_seed, int):
+                                continue
+                        else:
+                            print(f"[Impact Pack] Only ImpactInt and Primitive Node are allowed as the seed for '{v['class_type']}'. It will be ignored. ")
+                            continue
+                    except:
+                        continue
+                else:
+                    input_seed = int(inputs['seed'])
+
+                inputs['populated_text'] = wildcards.process(inputs['wildcard_text'], input_seed)
+                inputs['mode'] = False
+
+                server.PromptServer.instance.send_sync("impact-node-feedback", {"node_id": k, "widget_name": "populated_text", "type": "STRING", "value": inputs['populated_text']})
+                updated_widget_values[k] = inputs['populated_text']
+
+    if 'extra_data' in json_data and 'extra_pnginfo' in json_data['extra_data']:
+        for node in json_data['extra_data']['extra_pnginfo']['workflow']['nodes']:
+            key = str(node['id'])
+            if key in updated_widget_values:
+                node['widgets_values'][1] = updated_widget_values[key]
+                node['widgets_values'][2] = False
+
+
+def onprompt_for_remote(json_data):
+    prompt = json_data['prompt']
+
+    for v in prompt.values():
+        if 'class_type' in v:
+            cls = v['class_type']
+            if cls == 'ImpactRemoteBoolean' or cls == 'ImpactRemoteInt':
+                inputs = v['inputs']
+                node_id = str(inputs['node_id'])
+
+                if node_id not in prompt:
+                    continue
+
+                target_inputs = prompt[node_id]['inputs']
+
+                widget_name = inputs['widget_name']
+                if widget_name in target_inputs:
+                    widget_type = None
+                    if cls == 'ImpactRemoteBoolean' and isinstance(target_inputs[widget_name], bool):
+                        widget_type = 'BOOLEAN'
+
+                    elif cls == 'ImpactRemoteInt' and (isinstance(target_inputs[widget_name], int) or isinstance(target_inputs[widget_name], float)):
+                        widget_type = 'INT'
+
+                    if widget_type is None:
+                        break
+
+                    target_inputs[widget_name] = inputs['value']
+                    server.PromptServer.instance.send_sync("impact-node-feedback", {"node_id": node_id, "widget_name": widget_name, "type": widget_type, "value": inputs['value']})
 
 
 def onprompt(json_data):
     try:
-        json_data = onprompt_for_switch(json_data)
+        onprompt_for_remote(json_data)  # NOTE: top priority
+        onprompt_for_switch(json_data)
         onprompt_for_pickers(json_data)
+        onprompt_populate_wildcards(json_data)
         gc_preview_bridge_cache(json_data)
         workflow_imagereceiver_update(json_data)
         regional_sampler_seed_update(json_data)

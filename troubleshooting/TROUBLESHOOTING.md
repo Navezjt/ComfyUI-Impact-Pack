@@ -14,6 +14,53 @@
         2. execute ```(YOUR PYTHON) -s -m custom_nodes\ComfyUI-Impact-Pack\install.py```
 
 
+## If the nodes of the Impact Pack hang during execution
+
+* During the execution of processes related to dilation, issues like this may arise depending on the compatibility of the computer environment.
+* Please set `disable_gpu_opencv = True` in the `ComfyUI-Impact-Pack/impact-pack.ini` file. Occasionally, issues may arise when the OpenCV GPU mode is activated depending on the environment.
+
+    e.g.
+```
+[default]
+dependency_version = 17
+mmdet_skip = True
+sam_editor_cpu = False
+sam_editor_model = sam_vit_b_01ec64.pth
+custom_wildcards = /home/me/github/ComfyUI/custom_nodes/ComfyUI-Impact-Pack/custom_wildcards
+disable_gpu_opencv = True
+```
+
+## An issue has occurred with importing Ultralytics.
+```
+    AttributeError: 'Logger' object has no attribute 'reconfigure'
+
+    or 
+
+    AttributeError: 'Logger' object has no attribute 'encoding'
+```
+* Update `ComfyUI-Manager` to V1.1.2 or above
+
+
+## An issue has occurred about 'cv2'
+
+```
+    AttributeError: module 'cv2' has no attribute 'setNumThreads'
+```
+
+* Update 'opencv-python' and 'opencv-python-headless' to latest version
+    * Once you update to the latest version, you can also downgrade back to 4.6.0.66 if needed.
+    *  For the portable version, navigate to the portable installation directory in the command prompt, and enter the following command: 
+
+    ```
+    .\python_embeded\python.exe -m pip install -U opencv-python opencv-python-headless
+    ```
+
+    * When using the WAS node suite or reactor nodes, using the latest version may not work as expected. You can downgrade using the following command:
+
+    ```
+    .\python_embeded\python.exe -m pip install -U opencv-python==4.6.0.66 opencv-python-headless==4.6.0.66
+    ```
+
 
 ## Destortion on Detailer
 
