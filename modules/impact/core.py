@@ -19,7 +19,9 @@ import impact.wildcards as wildcards
 import math
 import cv2
 import time
+from comfy import model_management
 from impact import utils
+from scipy.ndimage import distance_transform_edt
 
 SEG = namedtuple("SEG",
                  ['cropped_image', 'cropped_mask', 'confidence', 'crop_region', 'bbox', 'label', 'control_net_wrapper'],
@@ -187,9 +189,12 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
                    wildcard_opt=None, wildcard_opt_concat_mode=None,
                    detailer_hook=None,
                    refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
-                   refiner_negative=None, control_net_wrapper=None, cycle=1, inpaint_model=False):
-    if noise_mask is not None and len(noise_mask.shape) == 3:
-        noise_mask = noise_mask.squeeze(0)
+                   refiner_negative=None, control_net_wrapper=None, cycle=1,
+                   inpaint_model=False, noise_mask_feather=0):
+
+    if noise_mask is not None:
+        noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
+        noise_mask = noise_mask.squeeze(3)
 
     if wildcard_opt is not None and wildcard_opt != "":
         model, _, wildcard_positive = wildcards.process_with_loras(wildcard_opt, model, clip)
@@ -251,15 +256,13 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
 
     # upscale
     upscaled_image = tensor_resize(image, new_w, new_h)
-    noise_mask = torch.from_numpy(noise_mask)
-    noise_mask = utils.make_3d_mask(noise_mask)
 
     cnet_pils = None
     if control_net_wrapper is not None:
         positive, cnet_pils = control_net_wrapper.apply(positive, upscaled_image, noise_mask)
 
     # prepare mask
-    if inpaint_model:
+    if noise_mask is not None and inpaint_model:
         positive, negative, latent_image = nodes.InpaintModelConditioning().encode(positive, negative, upscaled_image, vae, noise_mask)
     else:
         latent_image = to_latent_image(upscaled_image, vae)
@@ -315,9 +318,10 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
                                    wildcard_opt=None, wildcard_opt_concat_mode=None,
                                    detailer_hook=None,
                                    refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
-                                   refiner_negative=None, inpaint_model=False):
-    if noise_mask is not None and len(noise_mask.shape) == 3:
-        noise_mask = noise_mask.squeeze(0)
+                                   refiner_negative=None, inpaint_model=False, noise_mask_feather=0):
+    if noise_mask is not None:
+        noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
+        noise_mask = noise_mask.squeeze(3)
 
     if wildcard_opt is not None and wildcard_opt != "":
         model, _, wildcard_positive = wildcards.process_with_loras(wildcard_opt, model, clip)
@@ -491,7 +495,7 @@ def make_sam_mask(sam_model, segs, image, detection_hint, dilation,
                   threshold, bbox_expansion, mask_hint_threshold, mask_hint_use_negative):
     if sam_model.is_auto_mode:
         device = comfy.model_management.get_torch_device()
-        sam_model.to(device=device)
+        sam_model.safe_to.to_device(sam_model, device=device)
 
     try:
         predictor = SamPredictor(sam_model)
@@ -596,7 +600,6 @@ def make_sam_mask(sam_model, segs, image, detection_hint, dilation,
 
     finally:
         if sam_model.is_auto_mode:
-            print(f"semd to {device}")
             sam_model.to(device="cpu")
 
     if mask is not None:
@@ -604,7 +607,8 @@ def make_sam_mask(sam_model, segs, image, detection_hint, dilation,
         mask = dilate_mask(mask.cpu().numpy(), dilation)
         mask = torch.from_numpy(mask)
     else:
-        mask = torch.zeros((8, 8), dtype=torch.float32, device="cpu")  # empty mask
+        size = image.shape[0], image.shape[1]
+        mask = torch.zeros(size, dtype=torch.float32, device="cpu")  # empty mask
 
     mask = utils.make_3d_mask(mask)
     return mask
@@ -755,7 +759,7 @@ def make_sam_mask_segmented(sam_model, segs, image, detection_hint, dilation,
                             threshold, bbox_expansion, mask_hint_threshold, mask_hint_use_negative):
     if sam_model.is_auto_mode:
         device = comfy.model_management.get_torch_device()
-        sam_model.to(device=device)
+        sam_model.safe_to.to_device(sam_model, device=device)
 
     try:
         predictor = SamPredictor(sam_model)
@@ -1592,12 +1596,18 @@ class PixelKSampleUpscaler:
 
 
 class ControlNetWrapper:
-    def __init__(self, control_net, strength, preprocessor, prev_control_net=None):
+    def __init__(self, control_net, strength, preprocessor, prev_control_net=None,
+                 original_size=None, crop_region=None, control_image=None):
         self.control_net = control_net
         self.strength = strength
         self.preprocessor = preprocessor
-        self.image = None
         self.prev_control_net = prev_control_net
+
+        if original_size is not None and crop_region is not None and control_image is not None:
+            self.control_image = utils.tensor_resize(control_image, original_size[1], original_size[0])
+            self.control_image = torch.tensor(utils.tensor_crop(self.control_image, crop_region))
+        else:
+            self.control_image = None
 
     def apply(self, conditioning, image, mask=None):
         cnet_pils = []
@@ -1606,7 +1616,9 @@ class ControlNetWrapper:
         if self.prev_control_net is not None:
             conditioning, prev_cnet_pils = self.prev_control_net.apply(conditioning, image, mask)
 
-        if self.preprocessor is not None:
+        if self.control_image is not None:
+            cnet_pil = self.control_image
+        elif self.preprocessor is not None:
             cnet_pil = self.preprocessor.apply(image, mask)
         else:
             cnet_pil = image
@@ -1784,6 +1796,93 @@ def update_node_status(node, text, progress=None):
         "progress": progress,
         "text": text
     }, PromptServer.instance.client_id)
+
+
+from concurrent.futures import ThreadPoolExecutor
+
+
+def random_mask_raw(mask, bbox, factor):
+    x1, y1, x2, y2 = bbox
+    w = x2 - x1
+    h = y2 - y1
+
+    factor = int(min(w, h) * factor / 4)
+
+    def draw_random_circle(center, radius):
+        i, j = center
+        for x in range(int(i - radius), int(i + radius)):
+            for y in range(int(j - radius), int(j + radius)):
+                if np.linalg.norm(np.array([x, y]) - np.array([i, j])) <= radius:
+                    mask[x, y] = 1
+
+    def draw_irregular_line(start, end, pivot, is_vertical):
+        i = start
+        while i < end:
+            base_radius = np.random.randint(5, factor)
+            radius = int(base_radius)
+
+            if is_vertical:
+                draw_random_circle((i, pivot), radius)
+            else:
+                draw_random_circle((pivot, i), radius)
+
+            i += radius
+
+    def draw_irregular_line_parallel(start, end, pivot, is_vertical):
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = []
+            step = (end - start) // 16
+            for i in range(start, end, step):
+                future = executor.submit(draw_irregular_line, i, min(i + step, end), pivot, is_vertical)
+                futures.append(future)
+
+            for future in futures:
+                future.result()
+
+    draw_irregular_line_parallel(y1 + factor, y2 - factor, x1 + factor, True)
+    draw_irregular_line_parallel(y1 + factor, y2 - factor, x2 - factor, True)
+    draw_irregular_line_parallel(x1 + factor, x2 - factor, y1 + factor, False)
+    draw_irregular_line_parallel(x1 + factor, x2 - factor, y2 - factor, False)
+
+    mask[y1 + factor:y2 - factor, x1 + factor:x2 - factor] = 1.0
+
+
+def random_mask(mask, bbox, factor, size=128):
+    small_mask = np.zeros((size, size)).astype(np.float32)
+    random_mask_raw(small_mask, (0, 0, size, size), factor)
+
+    x1, y1, x2, y2 = bbox
+    small_mask = torch.tensor(small_mask).unsqueeze(0).unsqueeze(0)
+    bbox_mask = torch.nn.functional.interpolate(small_mask, size=(y2 - y1, x2 - x1), mode='bilinear', align_corners=False)
+    bbox_mask = bbox_mask.squeeze(0).squeeze(0)
+    mask[y1:y2, x1:x2] = bbox_mask
+
+
+def adaptive_mask_paste(dest_mask, src_mask, bbox):
+    x1, y1, x2, y2 = bbox
+    small_mask = torch.tensor(src_mask).unsqueeze(0).unsqueeze(0)
+    bbox_mask = torch.nn.functional.interpolate(small_mask, size=(y2 - y1, x2 - x1), mode='bilinear', align_corners=False)
+    bbox_mask = bbox_mask.squeeze(0).squeeze(0)
+    dest_mask[y1:y2, x1:x2] = bbox_mask
+
+
+class SafeToGPU:
+    def __init__(self, size):
+        self.size = size
+
+    def to_device(self, obj, device):
+        if utils.is_same_device(device, 'cpu'):
+            obj.to(device)
+        else:
+            if utils.is_same_device(obj.device, 'cpu'):  # cpu to gpu
+                model_management.free_memory(self.size * 1.3, device)
+                if model_management.get_free_memory(device) > self.size * 1.3:
+                    try:
+                        obj.to(device)
+                    except:
+                        print(f"WARN: The model is not moved to the '{device}' due to insufficient memory. [1]")
+                else:
+                    print(f"WARN: The model is not moved to the '{device}' due to insufficient memory. [2]")
 
 
 from comfy.cli_args import args, LatentPreviewMethod

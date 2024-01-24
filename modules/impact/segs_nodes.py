@@ -39,6 +39,7 @@ class SEGSDetailer:
                 "optional": {
                      "refiner_basic_pipe_opt": ("BASIC_PIPE",),
                      "inpaint_model": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
+                     "noise_mask_feather": ("INT", {"default": 10, "min": 0, "max": 100, "step": 1}),
                      }
                 }
 
@@ -53,7 +54,7 @@ class SEGSDetailer:
     @staticmethod
     def do_detail(image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
                   denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio=None, batch_size=1, cycle=1,
-                  refiner_basic_pipe_opt=None, inpaint_model=False):
+                  refiner_basic_pipe_opt=None, inpaint_model=False, noise_mask_feather=0):
 
         model, clip, vae, positive, negative = basic_pipe
         if refiner_basic_pipe_opt is None:
@@ -89,7 +90,8 @@ class SEGSDetailer:
                                                                 positive, negative, denoise, cropped_mask, force_inpaint,
                                                                 refiner_ratio=refiner_ratio, refiner_model=refiner_model,
                                                                 refiner_clip=refiner_clip, refiner_positive=refiner_positive, refiner_negative=refiner_negative,
-                                                                control_net_wrapper=seg.control_net_wrapper, cycle=cycle, inpaint_model=inpaint_model)
+                                                                control_net_wrapper=seg.control_net_wrapper, cycle=cycle,
+                                                                inpaint_model=inpaint_model, noise_mask_feather=noise_mask_feather)
 
                 if cnet_pils is not None:
                     cnet_pil_list.extend(cnet_pils)
@@ -106,14 +108,15 @@ class SEGSDetailer:
 
     def doit(self, image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
              denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio=None, batch_size=1, cycle=1,
-             refiner_basic_pipe_opt=None, inpaint_model=False):
+             refiner_basic_pipe_opt=None, inpaint_model=False, noise_mask_feather=0):
 
         if len(image) > 1:
             raise Exception('[Impact Pack] ERROR: SEGSDetailer does not allow image batches.\nPlease refer to https://github.com/ltdrdata/ComfyUI-extension-tutorials/blob/Main/ComfyUI-Impact-Pack/tutorial/batching-detailer.md for more information.')
 
         segs, cnet_pil_list = SEGSDetailer.do_detail(image, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
                                                      scheduler, denoise, noise_mask, force_inpaint, basic_pipe, refiner_ratio, batch_size, cycle=cycle,
-                                                     refiner_basic_pipe_opt=refiner_basic_pipe_opt, inpaint_model=inpaint_model)
+                                                     refiner_basic_pipe_opt=refiner_basic_pipe_opt,
+                                                     inpaint_model=inpaint_model, noise_mask_feather=noise_mask_feather)
 
         # set fallback image
         if len(cnet_pil_list) == 0:
@@ -143,6 +146,7 @@ class SEGSDetailerForAnimateDiff:
                 "optional": {
                      "refiner_basic_pipe_opt": ("BASIC_PIPE",),
                      # TODO: "inpaint_model": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
+                     # TODO: "noise_mask_feather": ("INT", {"default": 10, "min": 0, "max": 100, "step": 1}),
                      }
                 }
 
@@ -156,7 +160,7 @@ class SEGSDetailerForAnimateDiff:
 
     @staticmethod
     def do_detail(image_frames, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
-                  denoise, basic_pipe, refiner_ratio=None, refiner_basic_pipe_opt=None, inpaint_model=False):
+                  denoise, basic_pipe, refiner_ratio=None, refiner_basic_pipe_opt=None, inpaint_model=False, noise_mask_feather=0):
 
         model, clip, vae, positive, negative = basic_pipe
         if refiner_basic_pipe_opt is None:
@@ -186,7 +190,8 @@ class SEGSDetailerForAnimateDiff:
                                                                         positive, negative, denoise, seg.cropped_mask,
                                                                         refiner_ratio=refiner_ratio, refiner_model=refiner_model,
                                                                         refiner_clip=refiner_clip, refiner_positive=refiner_positive,
-                                                                        refiner_negative=refiner_negative, inpaint_model=inpaint_model)
+                                                                        refiner_negative=refiner_negative,
+                                                                        inpaint_model=inpaint_model, noise_mask_feather=noise_mask_feather)
 
             if enhanced_image_tensor is None:
                 new_cropped_image = cropped_image_frames
@@ -199,10 +204,11 @@ class SEGSDetailerForAnimateDiff:
         return (segs[0], new_segs)
 
     def doit(self, image_frames, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name, scheduler,
-             denoise, basic_pipe, refiner_ratio=None, refiner_basic_pipe_opt=None, inpaint_model=False):
+             denoise, basic_pipe, refiner_ratio=None, refiner_basic_pipe_opt=None, inpaint_model=False, noise_mask_feather=0):
 
         segs = SEGSDetailerForAnimateDiff.do_detail(image_frames, segs, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
-                                                    scheduler, denoise, basic_pipe, refiner_ratio, refiner_basic_pipe_opt, inpaint_model=inpaint_model)
+                                                    scheduler, denoise, basic_pipe, refiner_ratio, refiner_basic_pipe_opt,
+                                                    inpaint_model=inpaint_model, noise_mask_feather=noise_mask_feather)
 
         return (segs,)
 
@@ -268,6 +274,53 @@ class SEGSPaste:
                 result = torch.concat((result, image_i), dim=0)
 
         return (result, )
+
+
+class SEGSPreviewCNet:
+    def __init__(self):
+        self.output_dir = folder_paths.get_temp_directory()
+        self.type = "temp"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {"segs": ("SEGS", ),}, }
+
+    RETURN_TYPES = ("IMAGE", )
+    OUTPUT_IS_LIST = (True, )
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Util"
+
+    OUTPUT_NODE = True
+
+    def doit(self, segs):
+        full_output_folder, filename, counter, subfolder, filename_prefix = \
+            folder_paths.get_save_image_path("impact_seg_preview", self.output_dir, segs[0][1], segs[0][0])
+
+        results = list()
+        result_image_list = []
+
+        for seg in segs[1]:
+            file = f"{filename}_{counter:05}_.webp"
+
+            if seg.control_net_wrapper is not None and seg.control_net_wrapper.control_image is not None:
+                cnet_image = seg.control_net_wrapper.control_image
+                result_image_list.append(cnet_image)
+            else:
+                cnet_image = empty_pil_tensor(64, 64)
+
+            cnet_pil = utils.tensor2pil(cnet_image)
+            cnet_pil.save(os.path.join(full_output_folder, file))
+
+            results.append({
+                "filename": file,
+                "subfolder": subfolder,
+                "type": self.type
+            })
+
+            counter += 1
+
+        return {"ui": {"images": results}, "result": (result_image_list,)}
 
 
 class SEGSPreview:
@@ -1128,6 +1181,7 @@ class ControlNetApplySEGS:
                     },
                 "optional": {
                     "segs_preprocessor": ("SEGS_PREPROCESSOR",),
+                    "control_image": ("IMAGE",)
                     }
                 }
 
@@ -1136,11 +1190,12 @@ class ControlNetApplySEGS:
 
     CATEGORY = "ImpactPack/Util"
 
-    def doit(self, segs, control_net, strength, segs_preprocessor=None):
+    def doit(self, segs, control_net, strength, segs_preprocessor=None, control_image=None):
         new_segs = []
 
         for seg in segs[1]:
-            control_net_wrapper = core.ControlNetWrapper(control_net, strength, segs_preprocessor, seg.control_net_wrapper)
+            control_net_wrapper = core.ControlNetWrapper(control_net, strength, segs_preprocessor, seg.control_net_wrapper,
+                                                         original_size=segs[0], crop_region=seg.crop_region, control_image=control_image)
             new_seg = SEG(seg.cropped_image, seg.cropped_mask, seg.confidence, seg.crop_region, seg.bbox, seg.label, control_net_wrapper)
             new_segs.append(new_seg)
 
@@ -1222,8 +1277,6 @@ class SEGSPicker:
         # generate candidates image
         cands = []
         for seg in segs[1]:
-            cropped_image = None
-
             if seg.cropped_image is not None:
                 cropped_image = seg.cropped_image
             elif fallback_image_opt is not None:
@@ -1231,6 +1284,11 @@ class SEGSPicker:
                 cropped_image = crop_image(fallback_image_opt, seg.crop_region)
             else:
                 cropped_image = empty_pil_tensor()
+
+            mask_array = seg.cropped_mask
+            mask_array[mask_array < 0.3] = 0.3
+            mask_array = mask_array[None, ..., None]
+            cropped_image = cropped_image * mask_array
 
             cands.append(cropped_image)
 
@@ -1333,6 +1391,8 @@ class MakeTileSEGS:
                      "crop_factor": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10, "step": 0.1}),
                      "min_overlap": ("INT", {"default": 5, "min": 0, "max": 512, "step": 1}),
                      "filter_segs_dilation": ("INT", {"default": 20, "min": -255, "max": 255, "step": 1}),
+                     "mask_irregularity": ("FLOAT", {"default": 0, "min": 0, "max": 1.0, "step": 0.01}),
+                     "irregular_mask_mode": (["Reuse fast", "Reuse quality", "All random fast", "All random quality"],)
                     },
                 "optional": {
                     "filter_in_segs_opt": ("SEGS", ),
@@ -1346,13 +1406,27 @@ class MakeTileSEGS:
 
     CATEGORY = "ImpactPack/__for_testing"
 
-    def doit(self, images, bbox_size, crop_factor, min_overlap, filter_segs_dilation, filter_in_segs_opt=None, filter_out_segs_opt=None):
+    def doit(self, images, bbox_size, crop_factor, min_overlap, filter_segs_dilation, mask_irregularity=0, irregular_mask_mode="Reuse fast", filter_in_segs_opt=None, filter_out_segs_opt=None):
         if bbox_size <= 2*min_overlap:
             new_min_overlap = 2 / bbox_size
             print(f"[MakeTileSEGS] min_overlap should be greater than bbox_size. (value changed: {min_overlap} => {new_min_overlap})")
             min_overlap = new_min_overlap
 
         _, ih, iw, _ = images.size()
+
+        mask_cache = None
+        mask_quality = 512
+        if mask_irregularity > 0:
+            if irregular_mask_mode == "Reuse fast":
+                mask_quality = 128
+                mask_cache = np.zeros((128, 128)).astype(np.float32)
+                core.random_mask(mask_cache, (0, 0, 128, 128), factor=mask_irregularity, size=mask_quality)
+            elif irregular_mask_mode == "Reuse quality":
+                mask_quality = 512
+                mask_cache = np.zeros((512, 512)).astype(np.float32)
+                core.random_mask(mask_cache, (0, 0, 512, 512), factor=mask_irregularity, size=mask_quality)
+            elif irregular_mask_mode == "All random fast":
+                mask_quality = 512
 
         # create exclusion mask
         if filter_out_segs_opt is not None:
@@ -1430,13 +1504,39 @@ class MakeTileSEGS:
                 crop_region = make_crop_region(iw, ih, bbox, crop_factor)
                 cx1, cy1, cx2, cy2 = crop_region
 
+                mask = np.zeros((cy2 - cy1, cx2 - cx1)).astype(np.float32)
+
                 rel_left = x1 - cx1
                 rel_top = y1 - cy1
                 rel_right = x2 - cx1
                 rel_bot = y2 - cy1
 
-                mask = torch.zeros((cy2-cy1, cx2-cx1), dtype=torch.float32, device="cpu")
-                mask[rel_top:rel_bot, rel_left:rel_right] = 1.0
+                if mask_irregularity > 0:
+                    if mask_cache is not None:
+                        core.adaptive_mask_paste(mask, mask_cache, (rel_left, rel_top, rel_right, rel_bot))
+                    else:
+                        core.random_mask(mask, (rel_left, rel_top, rel_right, rel_bot), factor=mask_irregularity, size=mask_quality)
+
+                    # corner filling
+                    if rel_left == 0:
+                        pad = int((x2 - x1) / 8)
+                        mask[rel_top:rel_bot, :pad] = 1.0
+
+                    if rel_top == 0:
+                        pad = int((y2 - y1) / 8)
+                        mask[:pad, rel_left:rel_right] = 1.0
+
+                    if rel_right == mask.shape[1]:
+                        pad = int((x2 - x1) / 8)
+                        mask[rel_top:rel_bot, -pad:] = 1.0
+
+                    if rel_bot == mask.shape[0]:
+                        pad = int((y2 - y1) / 8)
+                        mask[-pad:, rel_left:rel_right] = 1.0
+                else:
+                    mask[rel_top:rel_bot, rel_left:rel_right] = 1.0
+
+                mask = torch.tensor(mask)
 
                 if exclusion_mask is not None:
                     exclusion_mask_cropped = exclusion_mask[cy1:cy2, cx1:cx2]

@@ -260,7 +260,7 @@ def use_gpu_opencv():
 
 def dilate_mask(mask, dilation_factor, iter=1):
     if dilation_factor == 0:
-        return mask
+        return make_2d_mask(mask)
 
     mask = make_2d_mask(mask)
 
@@ -493,6 +493,12 @@ def make_3d_mask(mask):
         return mask.unsqueeze(0)
 
     return mask
+
+
+def is_same_device(a, b):
+    a_device = torch.device(a) if isinstance(a, str) else a
+    b_device = torch.device(b) if isinstance(b, str) else b
+    return a_device.type == b_device.type and a_device.index == b_device.index
 
 
 def collect_non_reroute_nodes(node_map, links, res, node_id):
