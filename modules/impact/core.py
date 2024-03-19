@@ -1,15 +1,9 @@
-import copy
-import os
-
-import numpy
-import torch
 from segment_anything import SamPredictor
-import torch.nn.functional as F
 
 from impact.utils import *
 from collections import namedtuple
 import numpy as np
-from skimage.measure import label, regionprops
+from skimage.measure import label
 
 import nodes
 import comfy_extras.nodes_upscale_model as model_upscale
@@ -21,7 +15,14 @@ import cv2
 import time
 from comfy import model_management
 from impact import utils
-from scipy.ndimage import distance_transform_edt
+from impact import impact_sampling
+from concurrent.futures import ThreadPoolExecutor
+
+try:
+    from comfy_extras import nodes_differential_diffusion
+except Exception:
+    print(f"[Impact Pack] ComfyUI is an outdated version. The DifferentialDiffusion feature will be disabled.")
+
 
 SEG = namedtuple("SEG",
                  ['cropped_image', 'cropped_mask', 'confidence', 'crop_region', 'bbox', 'label', 'control_net_wrapper'],
@@ -69,44 +70,6 @@ def erosion_mask(mask, grow_mask_by):
     return mask_erosion[:, :, :w, :h].round().cpu()
 
 
-def ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise,
-                     refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
-                     refiner_negative=None):
-    if refiner_ratio is None or refiner_model is None or refiner_clip is None or refiner_positive is None or refiner_negative is None:
-        refined_latent = \
-            nodes.KSampler().sample(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
-                                    denoise)[0]
-    else:
-        advanced_steps = math.floor(steps / denoise)
-        start_at_step = advanced_steps - steps
-        end_at_step = start_at_step + math.floor(steps * (1.0 - refiner_ratio))
-
-        print(f"pre: {start_at_step} .. {end_at_step} / {advanced_steps}")
-        temp_latent = \
-            nodes.KSamplerAdvanced().sample(model, "enable", seed, advanced_steps, cfg, sampler_name, scheduler,
-                                            positive, negative, latent_image, start_at_step, end_at_step,
-                                            "enable")[0]
-
-        if 'noise_mask' in latent_image:
-            # noise_latent = \
-            #     nodes.KSamplerAdvanced().sample(refiner_model, "enable", seed, advanced_steps, cfg, sampler_name,
-            #                                     scheduler, refiner_positive, refiner_negative, latent_image, end_at_step,
-            #                                     end_at_step, "enable")[0]
-
-            latent_compositor = nodes.NODE_CLASS_MAPPINGS['LatentCompositeMasked']()
-            temp_latent = \
-                latent_compositor.composite(latent_image, temp_latent, 0, 0, False, latent_image['noise_mask'])[0]
-
-        print(f"post: {end_at_step} .. {advanced_steps + 1} / {advanced_steps}")
-        refined_latent = \
-            nodes.KSamplerAdvanced().sample(refiner_model, "disable", seed, advanced_steps, cfg, sampler_name, scheduler,
-                                            refiner_positive, refiner_negative, temp_latent, end_at_step,
-                                            advanced_steps + 1,
-                                            "disable")[0]
-
-    return refined_latent
-
-
 class REGIONAL_PROMPT:
     def __init__(self, mask, sampler):
         mask = make_2d_mask(mask)
@@ -115,6 +78,12 @@ class REGIONAL_PROMPT:
         self.sampler = sampler
         self.mask_erosion = None
         self.erosion_factor = None
+
+    def clone_with_sampler(self, sampler):
+        rp = REGIONAL_PROMPT(self.mask, sampler)
+        rp.mask_erosion = self.mask_erosion
+        rp.erosion_factor = self.erosion_factor
+        return rp
 
     def get_mask_erosion(self, factor):
         if self.mask_erosion is None or self.erosion_factor != factor:
@@ -196,6 +165,12 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
         noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
         noise_mask = noise_mask.squeeze(3)
 
+        if noise_mask_feather > 0:
+            try:
+                model = nodes_differential_diffusion.DifferentialDiffusion().apply(model)[0]
+            except Exception:
+                print(f"[Impact Pack] ComfyUI is an outdated version. The DifferentialDiffusion feature will be disabled.")
+
     if wildcard_opt is not None and wildcard_opt != "":
         model, _, wildcard_positive = wildcards.process_with_loras(wildcard_opt, model, clip)
 
@@ -259,7 +234,9 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
 
     cnet_pils = None
     if control_net_wrapper is not None:
-        positive, cnet_pils = control_net_wrapper.apply(positive, upscaled_image, noise_mask)
+        positive, negative, cnet_pils = control_net_wrapper.apply(positive, negative, upscaled_image, noise_mask)
+        model, cnet_pils2 = control_net_wrapper.doit_ipadapter(model)
+        cnet_pils.extend(cnet_pils2)
 
     # prepare mask
     if noise_mask is not None and inpaint_model:
@@ -288,9 +265,8 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
             model2, seed2, steps2, cfg2, sampler_name2, scheduler2, positive2, negative2, upscaled_latent2, denoise2 = \
                 model, seed + i, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise
 
-        refined_latent = ksampler_wrapper(model2, seed2, steps2, cfg2, sampler_name2, scheduler2, positive2, negative2,
-                                          refined_latent, denoise2,
-                                          refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
+        refined_latent = impact_sampling.ksampler_wrapper(model2, seed2, steps2, cfg2, sampler_name2, scheduler2, positive2, negative2,
+                                                          refined_latent, denoise2, refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
 
     if detailer_hook is not None:
         refined_latent = detailer_hook.pre_decode(refined_latent)
@@ -318,7 +294,7 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
                                    wildcard_opt=None, wildcard_opt_concat_mode=None,
                                    detailer_hook=None,
                                    refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
-                                   refiner_negative=None, inpaint_model=False, noise_mask_feather=0):
+                                   refiner_negative=None, control_net_wrapper=None, inpaint_model=False, noise_mask_feather=0):
     if noise_mask is not None:
         noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
         noise_mask = noise_mask.squeeze(3)
@@ -369,7 +345,7 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
     print(f"Detailer: segment upscale for ({bbox_w, bbox_h}) | crop region {w, h} x {upscale} -> {new_w, new_h}")
 
     # upscale the mask tensor by a factor of 2 using bilinear interpolation
-    if isinstance(noise_mask, numpy.ndarray):
+    if isinstance(noise_mask, np.ndarray):
         noise_mask = torch.from_numpy(noise_mask)
 
     if len(noise_mask.shape) == 2:
@@ -404,6 +380,10 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
         else:
             latent_frames = torch.concat((latent_frames, samples), dim=0)
 
+    cnet_images = None
+    if control_net_wrapper is not None:
+        positive, negative, cnet_images = control_net_wrapper.apply(positive, negative, torch.from_numpy(image_frames), noise_mask, use_acn=True)
+
     if len(upscaled_mask) != len(image_frames) and len(upscaled_mask) > 1:
         print(f"[Impact Pack] WARN: DetailerForAnimateDiff - The number of the mask frames({len(upscaled_mask)}) and the image frames({len(image_frames)}) are different. Combine the mask frames and apply.")
         combined_mask = upscaled_mask[0].to(torch.uint8)
@@ -424,9 +404,8 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
     if detailer_hook is not None:
         latent = detailer_hook.post_encode(latent)
 
-    refined_latent = ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
-                                      latent, denoise,
-                                      refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
+    refined_latent = impact_sampling.ksampler_wrapper(model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
+                                                      latent, denoise, refiner_ratio, refiner_model, refiner_clip, refiner_positive, refiner_negative)
 
     if detailer_hook is not None:
         refined_latent = detailer_hook.pre_decode(refined_latent)
@@ -448,7 +427,7 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
 
     refined_image_frames = nodes.ImageScale().upscale(image=refined_image_frames, upscale_method='lanczos', width=w, height=h, crop='disabled')[0]
 
-    return refined_image_frames
+    return refined_image_frames, cnet_images
 
 
 def composite_to(dest_latent, crop_region, src_latent):
@@ -474,6 +453,7 @@ def sam_predict(predictor, points, plabs, bbox, threshold):
 
     selected = False
     max_score = 0
+    max_mask = None
     for idx in range(len(scores)):
         if scores[idx] > max_score:
             max_score = scores[idx]
@@ -485,7 +465,7 @@ def sam_predict(predictor, points, plabs, bbox, threshold):
         else:
             pass
 
-    if not selected:
+    if not selected and max_mask is not None:
         total_masks.append(max_mask)
 
     return total_masks
@@ -745,7 +725,7 @@ def segs_scale_match(segs, target_shape):
         new_seg = SEG(cropped_image, cropped_mask, seg.confidence, crop_region, bbox, seg.label, seg.control_net_wrapper)
         new_segs.append(new_seg)
 
-    return ((th, tw), new_segs)
+    return (th, tw), new_segs
 
 
 # Used Python's slicing feature. stacked_masks[2::3] means starting from index 2, selecting every third tensor with a step size of 3.
@@ -1168,7 +1148,7 @@ def segs_to_masklist(segs):
 
     masks = []
     for seg in segs[1]:
-        if isinstance(seg.cropped_mask, numpy.ndarray):
+        if isinstance(seg.cropped_mask, np.ndarray):
             cropped_mask = torch.from_numpy(seg.cropped_mask)
         else:
             cropped_mask = seg.cropped_mask
@@ -1217,78 +1197,6 @@ def vae_encode(vae, pixels, use_tile, hook, tile_size=512):
     return samples
 
 
-class KSamplerWrapper:
-    params = None
-
-    def __init__(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise):
-        self.params = model, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise
-
-    def sample(self, latent_image, hook=None):
-        model, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise = self.params
-
-        if hook is not None:
-            model, seed, steps, cfg, sampler_name, scheduler, positive, negative, upscaled_latent, denoise = \
-                hook.pre_ksample(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
-                                 denoise)
-
-        return nodes.common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
-                                     denoise=denoise)[0]
-
-
-class KSamplerAdvancedWrapper:
-    params = None
-
-    def __init__(self, model, cfg, sampler_name, scheduler, positive, negative):
-        self.params = model, cfg, sampler_name, scheduler, positive, negative
-
-    def sample_advanced(self, add_noise, seed, steps, latent_image, start_at_step, end_at_step,
-                        return_with_leftover_noise, hook=None, recover_special_sampler=False):
-        model, cfg, sampler_name, scheduler, positive, negative = self.params
-
-        if hook is not None:
-            model, seed, steps, cfg, sampler_name, scheduler, positive, negative, upscaled_latent = \
-                hook.pre_ksample_advanced(model, add_noise, seed, steps, cfg, sampler_name, scheduler,
-                                          positive, negative, latent_image, start_at_step, end_at_step,
-                                          return_with_leftover_noise)
-
-        if recover_special_sampler and sampler_name in ['uni_pc', 'uni_pc_bh2', 'dpmpp_sde', 'dpmpp_sde_gpu', 'dpmpp_2m_sde', 'dpmpp_2m_sde_gpu', 'dpmpp_3m_sde', 'dpmpp_3m_sde_gpu']:
-            base_image = latent_image.copy()
-        else:
-            base_image = None
-
-        try:
-            latent_image = nodes.KSamplerAdvanced().sample(model, add_noise, seed, steps, cfg, sampler_name, scheduler,
-                                                           positive, negative, latent_image, start_at_step, end_at_step,
-                                                           return_with_leftover_noise)[0]
-        except ValueError as e:
-            if str(e) == 'sigma_min and sigma_max must not be 0':
-                print(f"\nWARN: sampling skipped - sigma_min and sigma_max are 0")
-                return latent_image
-
-        if recover_special_sampler and sampler_name in ['uni_pc', 'uni_pc_bh2', 'dpmpp_sde', 'dpmpp_sde_gpu', 'dpmpp_2m_sde', 'dpmpp_2m_sde_gpu', 'dpmpp_3m_sde', 'dpmpp_3m_sde_gpu']:
-            compensate = 0 if sampler_name in ['uni_pc', 'uni_pc_bh2'] else 2
-            sampler_name = 'dpmpp_fast' if sampler_name in ['uni_pc', 'uni_pc_bh2', 'dpmpp_sde', 'dpmpp_sde_gpu'] else 'dpmpp_2m'
-            latent_compositor = nodes.NODE_CLASS_MAPPINGS['LatentCompositeMasked']()
-
-            noise_mask = latent_image['noise_mask']
-
-            if len(noise_mask.shape) == 4:
-                noise_mask = noise_mask.squeeze(0).squeeze(0)
-
-            latent_image = \
-                latent_compositor.composite(base_image, latent_image, 0, 0, False, noise_mask)[0]
-
-            try:
-                latent_image = nodes.KSamplerAdvanced().sample(model, add_noise, seed, steps, cfg, sampler_name, scheduler,
-                                                               positive, negative, latent_image, start_at_step-compensate, end_at_step,
-                                                               return_with_leftover_noise)[0]
-            except ValueError as e:
-                if str(e) == 'sigma_min and sigma_max must not be 0':
-                    print(f"\nWARN: sampling skipped - sigma_min and sigma_max are 0")
-
-        return latent_image
-
-
 def latent_upscale_on_pixel_space_shape(samples, scale_method, w, h, vae, use_tile=False, tile_size=512,
                                         save_temp_prefix=None, hook=None):
     pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size)
@@ -1323,7 +1231,7 @@ def latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use
 
 def latent_upscale_on_pixel_space(samples, scale_method, scale_factor, vae, use_tile=False, tile_size=512,
                                   save_temp_prefix=None, hook=None):
-	return latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
+    return latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
 
 
 def latent_upscale_on_pixel_space_with_model_shape(samples, scale_method, upscale_model, new_w, new_h, vae,
@@ -1406,6 +1314,7 @@ class TwoSamplersForMaskUpscaler:
         self.hook_full = hook_full_opt
         self.use_tiled_vae = use_tiled_vae
         self.tile_size = tile_size
+        self.is_tiled = False
         self.vae = vae
 
     def upscale(self, step_info, samples, upscale_factor, save_temp_prefix=None):
@@ -1595,9 +1504,57 @@ class PixelKSampleUpscaler:
         return refined_latent
 
 
+class IPAdapterWrapper:
+    def __init__(self, ipadapter_pipe, weight, noise, weight_type, start_at, end_at, unfold_batch, faceid_v2, weight_v2, reference_image, prev_control_net=None):
+        self.reference_image = reference_image
+        self.ipadapter_pipe = ipadapter_pipe
+        self.weight = weight
+        self.weight_type = weight_type
+        self.noise = noise
+        self.start_at = start_at
+        self.end_at = end_at
+        self.unfold_batch = unfold_batch
+        self.prev_control_net = prev_control_net
+        self.faceid_v2 = faceid_v2
+        self.weight_v2 = weight_v2
+        self.image = reference_image
+
+    # name 'apply_ipadapter' isn't allowed
+    def doit_ipadapter(self, model):
+        cnet_image_list = [self.image]
+        prev_cnet_images = []
+
+        if 'IPAdapterApply' not in nodes.NODE_CLASS_MAPPINGS:
+            utils.try_install_custom_node('https://github.com/cubiq/ComfyUI_IPAdapter_plus',
+                                          "To use 'IPAdapterApplySEGS' node, 'ComfyUI IPAdapter Plus' extension is required.")
+            raise Exception(f"[ERROR] To use IPAdapterApplySEGS, you need to install 'ComfyUI IPAdapter Plus'")
+
+        obj = nodes.NODE_CLASS_MAPPINGS['IPAdapterApply']
+
+        ipadapter, _, clip_vision, insightface, lora_loader = self.ipadapter_pipe
+        model = lora_loader(model)
+
+        if self.prev_control_net is not None:
+            model, prev_cnet_images = self.prev_control_net.doit_ipadapter(model)
+
+        model = obj().apply_ipadapter(ipadapter, model, self.weight, clip_vision=clip_vision, image=self.image,
+                                      embeds=None, weight_type=self.weight_type, noise=self.noise,
+                                      attn_mask=None, start_at=self.start_at, end_at=self.end_at,
+                                      unfold_batch=self.unfold_batch, insightface=insightface, faceid_v2=self.faceid_v2, weight_v2=self.weight_v2)[0]
+
+        cnet_image_list.extend(prev_cnet_images)
+
+        return model, cnet_image_list
+
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.apply(positive, negative, image, mask, use_acn=use_acn)
+        else:
+            return positive, negative, []
+
+
 class ControlNetWrapper:
-    def __init__(self, control_net, strength, preprocessor, prev_control_net=None,
-                 original_size=None, crop_region=None, control_image=None):
+    def __init__(self, control_net, strength, preprocessor, prev_control_net=None, original_size=None, crop_region=None, control_image=None):
         self.control_net = control_net
         self.strength = strength
         self.preprocessor = preprocessor
@@ -1609,24 +1566,96 @@ class ControlNetWrapper:
         else:
             self.control_image = None
 
-    def apply(self, conditioning, image, mask=None):
-        cnet_pils = []
-        prev_cnet_pils = []
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        cnet_image_list = []
+        prev_cnet_images = []
 
         if self.prev_control_net is not None:
-            conditioning, prev_cnet_pils = self.prev_control_net.apply(conditioning, image, mask)
+            positive, negative, prev_cnet_images = self.prev_control_net.apply(positive, negative, image, mask, use_acn=use_acn)
 
         if self.control_image is not None:
-            cnet_pil = self.control_image
+            cnet_image = self.control_image
         elif self.preprocessor is not None:
-            cnet_pil = self.preprocessor.apply(image, mask)
+            cnet_image = self.preprocessor.apply(image, mask)
         else:
-            cnet_pil = image
+            cnet_image = image
 
-        cnet_pils.extend(prev_cnet_pils)
-        cnet_pils.append(cnet_pil)
+        cnet_image_list.extend(prev_cnet_images)
+        cnet_image_list.append(cnet_image)
 
-        return nodes.ControlNetApply().apply_controlnet(conditioning, self.control_net, cnet_pil, self.strength)[0], cnet_pils
+        if use_acn:
+            if "ACN_AdvancedControlNetApply" in nodes.NODE_CLASS_MAPPINGS:
+                acn = nodes.NODE_CLASS_MAPPINGS['ACN_AdvancedControlNetApply']()
+                positive, negative, _ = acn.apply_controlnet(positive=positive, negative=negative, control_net=self.control_net, image=cnet_image,
+                                                             strength=self.strength, start_percent=0.0, end_percent=1.0)
+            else:
+                utils.try_install_custom_node('https://github.com/BlenderNeko/ComfyUI_TiledKSampler',
+                                              "To use 'ControlNetWrapper' for AnimateDiff, 'ComfyUI-Advanced-ControlNet' extension is required.")
+                raise Exception("'ACN_AdvancedControlNetApply' node isn't installed.")
+        else:
+            positive = nodes.ControlNetApply().apply_controlnet(positive, self.control_net, cnet_image, self.strength)[0]
+
+        return positive, negative, cnet_image_list
+
+    def doit_ipadapter(self, model):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.doit_ipadapter(model)
+        else:
+            return model, []
+
+
+class ControlNetAdvancedWrapper:
+    def __init__(self, control_net, strength, start_percent, end_percent, preprocessor, prev_control_net=None,
+                 original_size=None, crop_region=None, control_image=None):
+        self.control_net = control_net
+        self.strength = strength
+        self.preprocessor = preprocessor
+        self.prev_control_net = prev_control_net
+        self.start_percent = start_percent
+        self.end_percent = end_percent
+
+        if original_size is not None and crop_region is not None and control_image is not None:
+            self.control_image = utils.tensor_resize(control_image, original_size[1], original_size[0])
+            self.control_image = torch.tensor(utils.tensor_crop(self.control_image, crop_region))
+        else:
+            self.control_image = None
+
+    def doit_ipadapter(self, model):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.doit_ipadapter(model)
+        else:
+            return model, []
+
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        cnet_image_list = []
+        prev_cnet_images = []
+
+        if self.prev_control_net is not None:
+            positive, negative, prev_cnet_images = self.prev_control_net.apply(positive, negative, image, mask)
+
+        if self.control_image is not None:
+            cnet_image = self.control_image
+        elif self.preprocessor is not None:
+            cnet_image = self.preprocessor.apply(image, mask)
+        else:
+            cnet_image = image
+
+        cnet_image_list.extend(prev_cnet_images)
+        cnet_image_list.append(cnet_image)
+
+        if use_acn:
+            if "ACN_AdvancedControlNetApply" in nodes.NODE_CLASS_MAPPINGS:
+                acn = nodes.NODE_CLASS_MAPPINGS['ACN_AdvancedControlNetApply']()
+                positive, negative, _ = acn.apply_controlnet(positive=positive, negative=negative, control_net=self.control_net, image=cnet_image,
+                                                             strength=self.strength, start_percent=self.start_percent, end_percent=self.end_percent)
+            else:
+                utils.try_install_custom_node('https://github.com/BlenderNeko/ComfyUI_TiledKSampler',
+                                              "To use 'ControlNetAdvancedWrapper' for AnimateDiff, 'ComfyUI-Advanced-ControlNet' extension is required.")
+                raise Exception("'ACN_AdvancedControlNetApply' node isn't installed.")
+        else:
+            positive, negative = nodes.ControlNetApplyAdvanced().apply_controlnet(positive, negative, self.control_net, cnet_image, self.strength, self.start_percent, self.end_percent)
+
+        return positive, negative, cnet_image_list
 
 
 # REQUIREMENTS: BlenderNeko/ComfyUI_TiledKSampler
@@ -1652,10 +1681,8 @@ class TiledKSamplerWrapper:
                 hook.pre_ksample(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
                                  denoise)
 
-        return \
-        TiledKSampler().sample(model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name,
-                               scheduler,
-                               positive, negative, latent_image, denoise)[0]
+        return TiledKSampler().sample(model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name,
+                                      scheduler, positive, negative, latent_image, denoise)[0]
 
 
 class PixelTiledKSampleUpscaler:
@@ -1682,10 +1709,8 @@ class PixelTiledKSampleUpscaler:
         scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise = self.params
         tile_width, tile_height, tiling_strategy = self.tile_params
 
-        return \
-        TiledKSampler().sample(model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name,
-                               scheduler,
-                               positive, negative, latent, denoise)[0]
+        return TiledKSampler().sample(model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name,
+                                      scheduler, positive, negative, latent, denoise)[0]
 
     def upscale(self, step_info, samples, upscale_factor, save_temp_prefix=None):
         scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise = self.params
@@ -1798,15 +1823,12 @@ def update_node_status(node, text, progress=None):
     }, PromptServer.instance.client_id)
 
 
-from concurrent.futures import ThreadPoolExecutor
-
-
 def random_mask_raw(mask, bbox, factor):
     x1, y1, x2, y2 = bbox
     w = x2 - x1
     h = y2 - y1
 
-    factor = int(min(w, h) * factor / 4)
+    factor = max(6, int(min(w, h) * factor / 4))
 
     def draw_random_circle(center, radius):
         i, j = center

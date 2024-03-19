@@ -7,6 +7,7 @@ import impact.impact_server
 from server import PromptServer
 from impact.utils import any_typ
 import impact.core as core
+import re
 
 
 class ImpactCompare:
@@ -106,6 +107,84 @@ class ImpactConditionalBranchSelMode:
             return (tt_value,)
         else:
             return (ff_value,)
+
+
+class ImpactConvertDataType:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"value": (any_typ,)}}
+
+    RETURN_TYPES = ("STRING", "FLOAT", "INT", "BOOLEAN")
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Logic"
+
+    @staticmethod
+    def is_number(string):
+        pattern = re.compile(r'^[-+]?[0-9]*\.?[0-9]+$')
+        return bool(pattern.match(string))
+
+    def doit(self, value):
+        if self.is_number(str(value)):
+            num = value
+        else:
+            if str.lower(str(value)) != "false":
+                num = 1
+            else:
+                num = 0
+        return (str(value), float(num), int(float(num)), bool(float(num)), )
+
+
+class ImpactIfNone:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {},
+            "optional": {"signal": (any_typ,), "any_input": (any_typ,), }
+        }
+
+    RETURN_TYPES = (any_typ, "BOOLEAN", )
+    RETURN_NAMES = ("signal_opt", "bool")
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Logic"
+
+    def doit(self, signal=None, any_input=None):
+        if any_input is None:
+            return (signal, False, )
+        else:
+            return (signal, True, )
+
+
+class ImpactLogicalOperators:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "operator": (['and', 'or', 'xor'],),
+                "bool_a": ("BOOLEAN", {"forceInput": True}),
+                "bool_b": ("BOOLEAN", {"forceInput": True}),
+            },
+        }
+
+    FUNCTION = "doit"
+    CATEGORY = "ImpactPack/Logic"
+
+    RETURN_TYPES = ("BOOLEAN", )
+
+    def doit(self, operator, bool_a, bool_b):
+        if operator == "and":
+            return (bool_a and bool_b, )
+        elif operator == "or":
+            return (bool_a or bool_b, )
+        else:
+            return (bool_a != bool_b, )
 
 
 class ImpactConditionalStopIteration:
@@ -345,26 +424,33 @@ class ImpactQueueTriggerCountdown:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-                    "signal": (any_typ,),
-                    "count": ("INT", {"default": 10, "min": 0, "max": 0xffffffffffffffff})
+                    "count": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                    "total": ("INT", {"default": 10, "min": 1, "max": 0xffffffffffffffff}),
+                    "mode": ("BOOLEAN", {"default": True, "label_on": "Trigger", "label_off": "Don't trigger"}),
                     },
+                "optional": {"signal": (any_typ,),},
                 "hidden": {"unique_id": "UNIQUE_ID"}
                 }
 
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Logic/_for_test"
-    RETURN_TYPES = (any_typ, "INT")
-    RETURN_NAMES = ("signal_opt", "count")
+    RETURN_TYPES = (any_typ, "INT", "INT")
+    RETURN_NAMES = ("signal_opt", "count", "total")
     OUTPUT_NODE = True
 
-    def doit(self, signal, count, unique_id):
-        if count > 0:
-            PromptServer.instance.send_sync("impact-node-feedback",
-                                            {"node_id": unique_id, "widget_name": "count", "type": "int", "value": count-1})
-            PromptServer.instance.send_sync("impact-add-queue", {})
+    def doit(self, count, total, mode, unique_id, signal=None):
+        if (mode):
+            if count < total - 1:
+                PromptServer.instance.send_sync("impact-node-feedback",
+                                                {"node_id": unique_id, "widget_name": "count", "type": "int", "value": count+1})
+                PromptServer.instance.send_sync("impact-add-queue", {})
+            if count >= total - 1:
+                PromptServer.instance.send_sync("impact-node-feedback",
+                                                {"node_id": unique_id, "widget_name": "count", "type": "int", "value": 0})
 
-        return (signal, count)
+        return (signal, count, total)
+
 
 
 class ImpactSetWidgetValue:

@@ -96,16 +96,18 @@ def setup_js():
 
 setup_js()
 
-from impact.impact_pack import *
-from impact.detectors import *
-from impact.pipe import *
-from impact.logics import *
-from impact.util_nodes import *
-from impact.segs_nodes import *
-from impact.special_samplers import *
-from impact.hf_nodes import *
-from impact.bridge_nodes import *
-from impact.hook_nodes import *
+from .modules.impact.impact_pack import *
+from .modules.impact.detectors import *
+from .modules.impact.pipe import *
+from .modules.impact.logics import *
+from .modules.impact.util_nodes import *
+from .modules.impact.segs_nodes import *
+from .modules.impact.special_samplers import *
+from .modules.impact.hf_nodes import *
+from .modules.impact.bridge_nodes import *
+from .modules.impact.hook_nodes import *
+from .modules.impact.animatediff_nodes import *
+from .modules.impact.segs_upscaler import *
 
 import threading
 
@@ -139,6 +141,7 @@ NODE_CLASS_MAPPINGS = {
     "DetailerForEachDebug": DetailerForEachTest,
     "DetailerForEachPipe": DetailerForEachPipe,
     "DetailerForEachDebugPipe": DetailerForEachTestPipe,
+    "DetailerForEachPipeForAnimateDiff": DetailerForEachPipeForAnimateDiff,
 
     "SAMDetectorCombined": SAMDetectorCombined,
     "SAMDetectorSegmented": SAMDetectorSegmented,
@@ -174,10 +177,12 @@ NODE_CLASS_MAPPINGS = {
 
     "PixelKSampleHookCombine": PixelKSampleHookCombine,
     "DenoiseScheduleHookProvider": DenoiseScheduleHookProvider,
+    "StepsScheduleHookProvider": StepsScheduleHookProvider,
     "CfgScheduleHookProvider": CfgScheduleHookProvider,
     "NoiseInjectionHookProvider": NoiseInjectionHookProvider,
     "UnsamplerHookProvider": UnsamplerHookProvider,
     "CoreMLDetailerHookProvider": CoreMLDetailerHookProvider,
+    "PreviewDetailerHookProvider": PreviewDetailerHookProvider,
 
     "DetailerHookCombine": DetailerHookCombine,
     "NoiseInjectionDetailerHookProvider": NoiseInjectionDetailerHookProvider,
@@ -211,7 +216,9 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSimpleDetectorSEGS": SimpleDetectorForEach,
     "ImpactSimpleDetectorSEGSPipe": SimpleDetectorForEachPipe,
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
+    "ImpactControlNetApplyAdvancedSEGS": ControlNetApplyAdvancedSEGS,
     "ImpactControlNetClearSEGS": ControlNetClearSEGS,
+    "ImpactIPAdapterApplySEGS": IPAdapterApplySEGS,
 
     "ImpactDecomposeSEGS": DecomposeSEGS,
     "ImpactAssembleSEGS": AssembleSEGS,
@@ -223,6 +230,8 @@ NODE_CLASS_MAPPINGS = {
     "ImpactDilateMaskInSEGS": DilateMaskInSEGS,
     "ImpactGaussianBlurMaskInSEGS": GaussianBlurMaskInSEGS,
     "ImpactScaleBy_BBOX_SEG_ELT": SEG_ELT_BBOX_ScaleBy,
+    "ImpactFrom_SEG_ELT_bbox": From_SEG_ELT_bbox,
+    "ImpactFrom_SEG_ELT_crop_region": From_SEG_ELT_crop_region,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
     "SegmDetectorCombined_v2": SegmDetectorCombined,
@@ -250,6 +259,8 @@ NODE_CLASS_MAPPINGS = {
     "ImpactWildcardProcessor": ImpactWildcardProcessor,
     "ImpactWildcardEncode": ImpactWildcardEncode,
 
+    "SEGSUpscaler": SEGSUpscaler,
+    "SEGSUpscalerPipe": SEGSUpscalerPipe,
     "SEGSDetailer": SEGSDetailer,
     "SEGSPaste": SEGSPaste,
     "SEGSPreview": SEGSPreview,
@@ -281,6 +292,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactCombineConditionings": CombineConditionings,
     "ImpactConcatConditionings": ConcatConditionings,
 
+    "ImpactSEGSLabelAssign": SEGSLabelAssign,
     "ImpactSEGSLabelFilter": SEGSLabelFilter,
     "ImpactSEGSRangeFilter": SEGSRangeFilter,
     "ImpactSEGSOrderedFilter": SEGSOrderedFilter,
@@ -288,6 +300,9 @@ NODE_CLASS_MAPPINGS = {
     "ImpactCompare": ImpactCompare,
     "ImpactConditionalBranch": ImpactConditionalBranch,
     "ImpactConditionalBranchSelMode": ImpactConditionalBranchSelMode,
+    "ImpactIfNone": ImpactIfNone,
+    "ImpactConvertDataType": ImpactConvertDataType,
+    "ImpactLogicalOperators": ImpactLogicalOperators,
     "ImpactInt": ImpactInt,
     "ImpactFloat": ImpactFloat,
     "ImpactValueSender": ImpactValueSender,
@@ -329,6 +344,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSimpleDetectorSEGS": "Simple Detector (SEGS)",
     "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
     "ImpactControlNetApplySEGS": "ControlNetApply (SEGS)",
+    "ImpactControlNetApplyAdvancedSEGS": "ControlNetApplyAdvanced (SEGS)",
+    "ImpactIPAdapterApplySEGS": "IPAdapterApply (SEGS)",
 
     "BboxDetectorCombined_v2": "BBOX Detector (combined)",
     "SegmDetectorCombined_v2": "SEGM Detector (combined)",
@@ -347,12 +364,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DetailerForEachPipe": "Detailer (SEGS/pipe)",
     "DetailerForEachDebug": "DetailerDebug (SEGS)",
     "DetailerForEachDebugPipe": "DetailerDebug (SEGS/pipe)",
-    "SEGSDetailerForAnimateDiff": "Detailer For AnimateDiff (SEGS/pipe)",
+    "SEGSDetailerForAnimateDiff": "SEGSDetailer For AnimateDiff (SEGS/pipe)",
+    "DetailerForEachPipeForAnimateDiff": "Detailer For AnimateDiff (SEGS/pipe)",
+    "SEGSUpscaler": "Upscaler (SEGS)",
+    "SEGSUpscalerPipe": "Upscaler (SEGS/pipe)",
 
     "SAMDetectorCombined": "SAMDetector (combined)",
     "SAMDetectorSegmented": "SAMDetector (segmented)",
     "FaceDetailerPipe": "FaceDetailer (pipe)",
-    "MaskDetailerPipe": "MaskDetailer (Pipe)",
+    "MaskDetailerPipe": "MaskDetailer (pipe)",
 
     "FromDetailerPipeSDXL": "FromDetailer (SDXL/pipe)",
     "BasicPipeToDetailerPipeSDXL": "BasicPipe -> DetailerPipe (SDXL)",
@@ -375,6 +395,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
     "ImpactKSamplerBasicPipe": "KSampler (pipe)",
     "ImpactKSamplerAdvancedBasicPipe": "KSampler (Advanced/pipe)",
+    "ImpactSEGSLabelAssign": "SEGS Assign (label)",
     "ImpactSEGSLabelFilter": "SEGS Filter (label)",
     "ImpactSEGSRangeFilter": "SEGS Filter (range)",
     "ImpactSEGSOrderedFilter": "SEGS Filter (ordered)",
@@ -388,6 +409,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactAssembleSEGS": "Assemble (SEGS)",
     "ImpactFrom_SEG_ELT": "From SEG_ELT",
     "ImpactEdit_SEG_ELT": "Edit SEG_ELT",
+    "ImpactFrom_SEG_ELT_bbox": "From SEG_ELT bbox",
+    "ImpactFrom_SEG_ELT_crop_region": "From SEG_ELT crop_region",
     "ImpactDilate_Mask_SEG_ELT": "Dilate Mask (SEG_ELT)",
     "ImpactScaleBy_BBOX_SEG_ELT": "ScaleBy BBOX (SEG_ELT)",
     "ImpactDilateMask": "Dilate Mask",
